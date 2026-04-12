@@ -3,7 +3,9 @@ from typing import Tuple
 
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation
 from numpy.typing import NDArray
+
 from opensfm import transformations
 
 
@@ -109,3 +111,12 @@ def phi_from_rotation(rotation_matrix: NDArray) -> float:
 
 def kappa_from_rotation(rotation_matrix: NDArray) -> float:
     return np.arctan2(-rotation_matrix[0, 1], rotation_matrix[0, 0])
+
+def average_rotation(rotations: NDArray) -> NDArray:
+    """
+    Average rotations in axis-angle representation by converting them to 
+    SciPy Rotation objects, averaging them and converting back to axis-angle.
+    """
+    r = Rotation.from_rotvec(rotations)
+    average_rotation = r.mean()
+    return average_rotation.as_rotvec()

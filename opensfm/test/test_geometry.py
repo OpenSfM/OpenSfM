@@ -27,3 +27,15 @@ def test_rotation_from_opk() -> None:
     ptr = 0.1, 0.2, 0.3
     rotation = geometry.rotation_from_opk(*ptr)
     assert np.allclose(ptr, geometry.opk_from_rotation(rotation))
+
+
+def test_average_rotation() -> None:
+    rotations = np.array(
+        [
+            [0.0, 0.0, 0.1],
+            [0.0, 0.0, 0.2],
+            [0.0, 0.0, 0.3],
+        ]
+    )
+    average = geometry.average_rotation(rotations)
+    assert np.allclose(average, np.array([0.0, 0.0, 0.2]))
