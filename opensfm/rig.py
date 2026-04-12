@@ -1,6 +1,7 @@
 # pyre-strict
 """Tool for handling rigs"""
 
+from collections import defaultdict
 import logging
 import os
 import random
@@ -9,8 +10,9 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, TYPE_CHECKING
 
 import networkx as nx
 import numpy as np
+from opensfm.reconstruction_helpers import reconstruction_from_metadata
 import scipy.spatial as spatial
-from opensfm import actions, pygeometry, pymap, reconstruction as orec, types
+from opensfm import actions, geometry, pygeometry, pymap, reconstruction as orec, types
 
 if TYPE_CHECKING:
     from opensfm.dataset import DataSet
@@ -211,20 +213,17 @@ def compute_relative_pose(
 ) -> Dict[str, pymap.RigCamera]:
     """Compute a rig model relatives poses given poses grouped by rig instance."""
 
-    # Put all poses instances into some canonical frame taken as the mean of their R|t
+    # Put all poses instances into some canonical frame taken as the mean of their translation
     centered_pose_instances = []
     for instance in pose_instances:
         origin_center = np.zeros(3)
-        rotation_center = np.zeros(3)
         for shot, _ in instance:
-            rotation_center += shot.pose.rotation
             origin_center += shot.pose.get_origin()
         origin_center /= len(instance)
-        rotation_center /= len(instance)
 
         centered_pose_instance = []
         for shot, rig_camera_id in instance:
-            instance_pose = pygeometry.Pose(rotation_center)
+            instance_pose = pygeometry.Pose()
             instance_pose.set_origin(origin_center)
             instance_pose_camera = shot.pose.relative_to(instance_pose)
             centered_pose_instance.append(
@@ -242,10 +241,10 @@ def compute_relative_pose(
         for pose, rig_camera_id, camera_id in centered_pose_instance:
             if rig_camera_id not in average_origin:
                 average_origin[rig_camera_id] = np.zeros(3)
-                average_rotation[rig_camera_id] = np.zeros(3)
+                average_rotation[rig_camera_id] = []
                 count_poses[rig_camera_id] = 0
             average_origin[rig_camera_id] += pose.get_origin()
-            average_rotation[rig_camera_id] += pose.rotation
+            average_rotation[rig_camera_id].append(pose.rotation)
             camera_ids[rig_camera_id] = camera_id
             count_poses[rig_camera_id] += 1
 
@@ -253,7 +252,7 @@ def compute_relative_pose(
     rig_cameras: Dict[str, pymap.RigCamera] = {}
     for rig_camera_id, count in count_poses.items():
         o = average_origin[rig_camera_id] / count
-        r = average_rotation[rig_camera_id] / count
+        r = geometry.average_rotation(np.array(average_rotation[rig_camera_id]))
         pose = pygeometry.Pose(r)
         pose.set_origin(o)
         rig_cameras[rig_camera_id] = pymap.RigCamera(pose, rig_camera_id)
@@ -294,7 +293,31 @@ def create_rig_cameras_from_reconstruction(
     return rig_cameras
 
 
-def create_rigs_with_pattern(data: "DataSet", patterns: TRigPatterns) -> None:
+def create_rigs_with_assignments(data: "DataSet", calibration_type: str) -> None:
+    """Create rig data (`rig_cameras.json` and `rig_assignments.json`) from the rig assignments file."""
+    rig_assignments = data.load_rig_assignments()
+    rig_cameras = data.load_rig_cameras()
+
+    instances_per_rig: defaultdict[str, TRigInstance] = defaultdict(list)
+    single_shots: List[str] = []
+    for instance_id, rig_instance in rig_assignments.items():
+        if len(rig_instance) == 0:
+            single_shots += rig_instance[0][0]
+            continue
+
+        for shot_id, rig_camera_id in rig_instance:
+            if rig_camera_id not in rig_cameras:
+                logger.warning(
+                    f"Rig camera {rig_camera_id} from rig assignments not found in rig cameras file. This shot will be ignored for rig cameras calibration."
+                )
+                single_shots += [shot_id]
+                continue
+            else:
+                instances_per_rig[instance_id].append((shot_id, rig_camera_id))
+
+    calibrate_rig_cameras(data, instances_per_rig, single_shots, calibration_type)
+
+def create_rigs_with_pattern(data: "DataSet", calibration_type: str, patterns: TRigPatterns) -> None:
     """Create rig data (`rig_cameras.json` and `rig_assignments.json`) by performing
     pattern matching to group images belonging to the same instances, followed
     by a bit of ad-hoc SfM to find some initial relative poses.
@@ -309,6 +332,74 @@ def create_rigs_with_pattern(data: "DataSet", patterns: TRigPatterns) -> None:
             f"Found {len(instances)} shots for instance {rig_id} using pattern matching."
         )
     logger.info(f"Found {len(single_shots)} single shots using pattern matching.")
+
+    calibrate_rig_cameras(data, instances_per_rig, single_shots, calibration_type)
+
+
+def calibrate_rig_cameras(
+    data: "DataSet", instances_per_rig: Dict[str, TRigInstance], single_shots: List[str], calibration_type: str
+) -> None:
+    """
+    Calibrate rig cameras given rig instances and a calibration type.
+    Args:
+    - data: dataset object
+    - instances_per_rig: dict of rig instance id to list of (shot id, rig camera id) tuples
+    - single_shots: list of shot ids that are not part of any rig instance
+    - calibration_type: 'sfm' will run incremental SfM to estimate the rig camera poses
+                        'metadata' will use the image metadata (GPS and orientation) to estimate the rig camera poses
+    """
+    if calibration_type == "sfm":
+        calibrate_rig_cameras_from_sfm(data, instances_per_rig, single_shots)
+    elif calibration_type == "metadata":
+        calibrate_rig_cameras_from_metadata(data, instances_per_rig, single_shots)
+    else:
+        raise ValueError(f"Unsupported calibration type {calibration_type}")
+    
+def calibrate_rig_cameras_from_metadata(
+    data: "DataSet", instances_per_rig: Dict[str, TRigInstance], single_shots: List[str]
+) -> None:
+    """
+    Calibrate rig cameras using the image metadata (GPS and orientation) to estimate the rig camera poses.
+    Args:
+    - data: dataset object
+    - instances_per_rig: dict of rig instance id to list of (shot id, rig camera id) tuples
+    - single_shots: list of shot ids that are not part of any rig instance 
+    """
+    # We temporarily mock rig loading functions so that they return empty rigs
+    load_rig_assignments_backup = data.load_rig_assignments
+    load_rig_cameras_backup = data.load_rig_cameras
+    data.load_rig_assignments = lambda: {}
+    data.load_rig_cameras = lambda: {}
+
+    # Here, reconstruction_from_metadata we directly use metadata to compute initial poses.
+    all_shots = set()
+    for instance in instances_per_rig.values():
+        for shot_id, _ in instance:
+            all_shots.add(shot_id)
+    all_shots.update(single_shots)
+    reconstruction = reconstruction_from_metadata(data, all_shots)
+    data.save_reconstruction([reconstruction], "rig_calibration_metadata_reconstruction.json")
+
+    # Extract rig cameras from the reconstruction and save them, along with rig assignments
+    rig_cameras = create_rig_cameras_from_reconstruction(reconstruction, instances_per_rig)
+    data.save_rig_cameras(rig_cameras)
+    data.save_rig_assignments(instances_per_rig)
+
+    # Restore rig loading functions
+    data.load_rig_assignments = load_rig_assignments_backup
+    data.load_rig_cameras = load_rig_cameras_backup
+    
+def calibrate_rig_cameras_from_sfm(
+    data: "DataSet", instances_per_rig: Dict[str, TRigInstance], single_shots: List[str]
+) -> None:
+    """
+    Calibrate rig cameras by running incremental SfM on a random subset of images from the rigs, 
+    and extracting relative poses from the resulting reconstruction.
+    Args:
+    - data: dataset object
+    - instances_per_rig: dict of rig instance id to list of (shot id, rig camera id) tuples
+    - single_shots: list of shot ids that are not part of any rig instance 
+    """
 
     # Create some random subset DataSet with enough images from each rig and run SfM
     count = 0

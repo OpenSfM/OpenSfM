@@ -11,22 +11,33 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 def run_dataset(
-    data: DataSet, method: str, definition: Dict[str, str], output_debug: bool
+    data: DataSet, 
+    method: str, 
+    calibration_type: str,
+    definition: Dict[str, str], 
+    output_debug: bool
 ) -> None:
     """Given a dataset that contains rigs, construct rig data files.
 
     Args:
         data: dataset object
-        method : `auto` will run `reconstruct` process and try to detect rig pattern (TODO)
-                 `camera` will create instances based on the camera model name
-                 'pattern` will create instances based on a REGEX pattern (see below)
-        definition : JSON dict (one for each RigCamera) with values as :
+        method : 'pattern` will create instances based on a REGEX pattern (see below)
+                 'assignments` will create instances based on the rig_assignments.json
+        calibration_type: 'sfm' will run incremental SfM to estimate the rig camera poses
+                          'metadata' will use the image metadata (GPS and orientation) to 
+                          estimate the rig camera poses
+        definition : For the `pattern` method, a JSON dict (one for each RigCamera) with values as :
                     - (.*) for `pattern` method where the part outside
                         of parenthesis defines a RigCamera instance
                     - a camera model ID for the `camera` method
         output_debug : output a debug JSON reconstruction `rig_instances.json` with rig instances
     """
-    rig.create_rigs_with_pattern(data, definition)
+    if method == "pattern":
+        rig.create_rigs_with_pattern(data, calibration_type, definition)
+    elif method == "assignments":
+        rig.create_rigs_with_assignments(data, calibration_type)
+    else:
+        raise ValueError(f"Unsupported method {method}")
     if output_debug:
         reconstructions = _reconstruction_from_rigs_and_assignments(data)
         data.save_reconstruction(reconstructions, "rig_instances.json")
