@@ -837,25 +837,42 @@ py::dict BAHelpers::Bundle(
     }
   }
 
-  // setup rig cameras
+  // Setup rig cameras
   constexpr size_t kMinRigInstanceForAdjust{10};
   const size_t shots_per_rig_cameras =
       map.GetRigCameras().size() > 0
           ? static_cast<size_t>(map.GetShots().size() /
                                 map.GetRigCameras().size())
           : 1;
-  const auto lock_rig_camera =
+  float avg_rig_cameras_per_instance = 0;
+  for (auto instance_pair : map.GetRigInstances()) {
+    int num_rig_cameras = instance_pair.second.GetRigCameras().size();
+    avg_rig_cameras_per_instance += num_rig_cameras; 
+  }
+  avg_rig_cameras_per_instance /= std::max(static_cast<size_t>(1), map.GetRigInstances().size());
+
+  // Whatever happens, never adjust rig cameras if there's not enough
+  // instances (can sometimes be unstable in incremental SfM)
+  const auto force_lock_rig_camera =
       shots_per_rig_cameras <= kMinRigInstanceForAdjust;
-  for (const auto& camera_pair : map.GetRigCameras()) {
-    // could be set to false (not locked) the day we expose leverarm adjustment
-    const bool is_leverarm =
-        all_cameras.find(camera_pair.first) != all_cameras.end();
-    ba.AddRigCamera(camera_pair.first, camera_pair.second.pose,
-                    rig_camera_priors.at(camera_pair.first).pose,
-                    is_leverarm | lock_rig_camera);
+
+  // Controlled by the user : do we actually adjust rigs at all ?
+  bool adjust_rig_cameras = config["optimize_rig_parameters"].cast<bool>();
+
+  // Safety check : in  case of no-rigs, if the user asked for rig camera optimization, we disable it
+  // to avoid unintended consequences (all cameras will be rig cameras and optimization will be unstable)
+  const bool is_no_rig = (std::fabs(avg_rig_cameras_per_instance - float(map.GetRigInstances().size())) < 1e-6);
+  if(adjust_rig_cameras && is_no_rig) {
+    adjust_rig_cameras = false;
   }
 
-  // setup rig instances
+  for (const auto& camera_pair : map.GetRigCameras()) {
+    ba.AddRigCamera(camera_pair.first, camera_pair.second.pose,
+                    rig_camera_priors.at(camera_pair.first).pose,
+                    !adjust_rig_cameras || force_lock_rig_camera);
+  }
+
+  // Setup rig instances
   const std::string gps_scale_group = "dummy";  // unused for now
   for (auto instance_pair : map.GetRigInstances()) {
     auto& instance = instance_pair.second;

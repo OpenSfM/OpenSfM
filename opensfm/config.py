@@ -282,6 +282,8 @@ class OpenSfMConfig:
     bundle_outlier_fixed_threshold: float = 0.006
     # Optimize internal camera parameters during bundle
     optimize_camera_parameters: bool = True
+    # Optimize rig parameters during bundle
+    optimize_rig_parameters: bool = False
     # Maximum optimizer iterations.
     bundle_max_iterations: int = 100
 
