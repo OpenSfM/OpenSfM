@@ -23,10 +23,11 @@ def run_dataset(
         data: dataset object
         method : 'pattern` will create instances based on a REGEX pattern (see below)
                  'assignments` will create instances based on the rig_assignments.json
+                 'camera' will create rigs based on a camera model ID
         calibration_type: 'sfm' will run incremental SfM to estimate the rig camera poses
                           'metadata' will use the image metadata (GPS and orientation) to 
                           estimate the rig camera poses
-        definition : For the `pattern` method, a JSON dict (one for each RigCamera) with values as :
+        definition : A JSON dict (one for each RigCamera) with values as :
                     - (.*) for `pattern` method where the part outside
                         of parenthesis defines a RigCamera instance
                     - a camera model ID for the `camera` method

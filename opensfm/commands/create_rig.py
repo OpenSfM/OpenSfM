@@ -18,11 +18,12 @@ class Command(command.CommandBase):
     def add_arguments_impl(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "--method",
-            choices=["assignments", "pattern"],
+            choices=["assignments", "pattern", "camera"],
             help=(
                 "Method for creating the rigs",
                 "`assignments` will create rigs based on the rig_assignments.json, "
-                "`pattern` will create rigs based on a REGEX pattern (see below)"
+                "`pattern` will create rigs based on a REGEX pattern (see below), "
+                "`camera` will create rigs based on a camera model ID"
             ),
         )
         parser.add_argument(
