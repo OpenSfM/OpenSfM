@@ -355,6 +355,8 @@ py::tuple BAHelpers::BundleLocal(
   const auto timer_triangulate = std::chrono::high_resolution_clock::now();
 
   report["brief_report"] = ba.BriefReport();
+  report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
+  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["neighborhood"] =
       std::chrono::duration_cast<std::chrono::microseconds>(
@@ -737,6 +739,8 @@ py::dict BAHelpers::BundleShotPoses(
 
   const auto timer_teardown = std::chrono::high_resolution_clock::now();
   report["brief_report"] = ba.BriefReport();
+  report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
+  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["setup"] =
       std::chrono::duration_cast<std::chrono::microseconds>(timer_setup - start)
@@ -994,6 +998,8 @@ py::dict BAHelpers::Bundle(
   const auto timer_triangulate = std::chrono::high_resolution_clock::now();
 
   report["brief_report"] = ba.BriefReport();
+  report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
+  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["setup"] =
       std::chrono::duration_cast<std::chrono::microseconds>(timer_setup - start)
