@@ -99,7 +99,6 @@ def reconstruction_from_metadata(
         reconstruction.add_rig_camera(rig_camera)
 
     shot_poses: Dict[str, pygeometry.Pose] = {}
-
     all_images: Set[str] = set()
     for image in images:
         all_images.add(image)
@@ -147,23 +146,20 @@ def reconstruction_from_metadata(
         shot_poses[image] = pose
 
     for rig_instance in reconstruction.rig_instances.values():
-        # Single shot instances can be updated consistently with the full pose
-        if len(rig_instance.shots) == 1:
-            shot_id = next(iter(rig_instance.shots))
-            rig_instance.update_instance_pose_with_shot(
+        average_translation = np.zeros(3)
+        rotations = []
+        for shot_id in rig_instance.shots:
+            if shot_id in shot_poses:
+                rig_instance.update_instance_pose_with_shot(
                     shot_id, shot_poses[shot_id]
                 )
-        # Rig instance position from the average GPS position of its shots, the
-        # rig camera will do the rest of the work to get the relative position of each shot
-        else:
-            avg_gps_pos = np.mean(
-                [shot.metadata.gps_position.value for shot in rig_instance.shots.values()],
-                axis=0,
-            )
-            # Since there is no way to specify rig instance rotation from metadata
-            # we only set the origin and assume identity rotation. This convention
-            # is a bit fragile though.
-            rig_instance.pose.set_origin(avg_gps_pos)
+                average_translation += rig_instance.pose.get_origin()
+                rotations.append(rig_instance.pose.rotation)
+
+
+        if len(rotations) > 0:
+            rig_instance.pose.rotation = geometry.average_rotation(rotations)
+            rig_instance.pose.set_origin(average_translation / len(rotations))            
 
     return reconstruction
 
