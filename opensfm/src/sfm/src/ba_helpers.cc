@@ -821,9 +821,10 @@ py::dict BAHelpers::Bundle(
   float avg_rig_cameras_per_instance = 0;
   for (auto instance_pair : map.GetRigInstances()) {
     int num_rig_cameras = instance_pair.second.GetRigCameras().size();
-    avg_rig_cameras_per_instance += num_rig_cameras; 
+    avg_rig_cameras_per_instance += num_rig_cameras;
   }
-  avg_rig_cameras_per_instance /= std::max(static_cast<size_t>(1), map.GetRigInstances().size());
+  avg_rig_cameras_per_instance /=
+      std::max(static_cast<size_t>(1), map.GetRigInstances().size());
 
   // Whatever happens, never adjust rig cameras if there's not enough
   // instances (can sometimes be unstable in incremental SfM)
@@ -833,10 +834,13 @@ py::dict BAHelpers::Bundle(
   // Controlled by the user : do we actually adjust rigs at all ?
   bool adjust_rig_cameras = config["optimize_rig_parameters"].cast<bool>();
 
-  // Safety check : in  case of no-rigs, if the user asked for rig camera optimization, we disable it
-  // to avoid unintended consequences (all cameras will be rig cameras and optimization will be unstable)
-  const bool is_no_rig = (std::fabs(avg_rig_cameras_per_instance - float(map.GetRigInstances().size())) < 1e-6);
-  if(adjust_rig_cameras && is_no_rig) {
+  // Safety check : in  case of no-rigs, if the user asked for rig camera
+  // optimization, we disable it to avoid unintended consequences (all cameras
+  // will be rig cameras and optimization will be unstable)
+  const bool is_no_rig =
+      (std::fabs(avg_rig_cameras_per_instance -
+                 float(map.GetRigInstances().size())) < 1e-6);
+  if (adjust_rig_cameras && is_no_rig) {
     adjust_rig_cameras = false;
   }
 
