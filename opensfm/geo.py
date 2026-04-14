@@ -1,5 +1,5 @@
 # pyre-strict
-from typing import List, overload, Sequence, Tuple, Union
+from typing import Any, Dict, List, overload, Sequence, Tuple, Union
 
 import numpy as np
 import pyproj
@@ -377,8 +377,8 @@ def transform_reconstruction_with_proj(
 ) -> None:
     """Apply a proj Transformer to a reconstruction in-place."""
     eps = 1e-3
-    for shot in reconstruction.shots.values():
-        origin = shot.pose.get_origin()
+    for rig_instance in reconstruction.rig_instances.values():
+        origin = rig_instance.pose.get_origin()
 
         # Jacobian for rotation update
         p0 = np.array(transform_to_proj(
@@ -392,9 +392,9 @@ def transform_reconstruction_with_proj(
         J = np.column_stack(
             ((px - p0) / eps, (py - p0) / eps, (pz - p0) / eps))
 
-        shot.pose.set_origin(p0)
-        shot.pose.set_rotation_matrix(
-            shot.pose.get_rotation_matrix() @ np.linalg.inv(J))
+        rig_instance.pose.set_origin(p0)
+        rig_instance.pose.set_rotation_matrix(
+            rig_instance.pose.get_rotation_matrix() @ np.linalg.inv(J))
 
     for point in reconstruction.points.values():
         point.coordinates = transform_to_proj(
