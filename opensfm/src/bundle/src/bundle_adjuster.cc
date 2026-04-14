@@ -1328,4 +1328,9 @@ std::string BundleAdjuster::BriefReport() const {
 std::string BundleAdjuster::FullReport() const {
   return last_run_summary_.FullReport();
 }
+
+const ceres::Solver::Summary& BundleAdjuster::CeresSolverSummary() const {
+  return last_run_summary_;
+}
+
 }  // namespace bundle

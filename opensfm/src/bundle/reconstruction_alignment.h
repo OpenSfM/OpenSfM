@@ -572,6 +572,7 @@ class ReconstructionAlignment {
   std::string BriefReport() { return last_run_summary_.BriefReport(); }
 
   std::string FullReport() { return last_run_summary_.FullReport(); }
+  const ceres::Solver::Summary& CeresSolverSummary() const { return last_run_summary_; }
 
  private:
   std::map<std::string, RAReconstruction> reconstructions_;

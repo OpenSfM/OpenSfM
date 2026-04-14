@@ -290,6 +290,7 @@ class BundleAdjuster {
   // Minimization details
   std::string BriefReport() const;
   std::string FullReport() const;
+  const ceres::Solver::Summary& CeresSolverSummary() const;
 
  private:
   // default sigmas
