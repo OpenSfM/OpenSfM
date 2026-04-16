@@ -125,7 +125,7 @@ def find_best_altitude(
 
 
 def get_representative_points(
-    images: List[str], exifs: Dict[str, Any], reference: geo.TopocentricConverter
+    images: List[str], exifs: Dict[str, Any], reference: geo.TopocentricConverter, use_opk: bool
 ) -> Dict[str, NDArray]:
     """Return a topocentric point for each image, that is suited to run distance-based pair selection."""
     origin = {}
@@ -148,7 +148,7 @@ def get_representative_points(
         if not has_gps:
             continue
 
-        has_opk = "opk" in exif
+        has_opk = "opk" in exif and use_opk
         has_ypr = "ypr" in exif
         had_orientation |= has_opk or has_ypr
 
@@ -179,6 +179,7 @@ def match_candidates_by_distance(
     reference: geo.TopocentricConverter,
     max_neighbors: int,
     max_distance: float,
+    use_opk: bool,
 ) -> Set[Tuple[str, str]]:
     """Find candidate matching pairs by GPS distance.
 
@@ -196,7 +197,7 @@ def match_candidates_by_distance(
     k = min(len(images_cand), max_neighbors)
 
     representative_points = get_representative_points(
-        images_cand + images_ref, exifs, reference
+        images_cand + images_ref, exifs, reference, use_opk
     )
 
     # we don't want to loose some images because of missing GPS :
@@ -246,6 +247,7 @@ def match_candidates_by_graph(
     exifs: Dict[str, Any],
     reference: geo.TopocentricConverter,
     rounds: int,
+    use_opk: bool,
 ) -> Set[Tuple[str, str]]:
     """Find by triangulating the GPS points on X/Y axises"""
     if len(images_cand) < 4 or rounds < 1:
@@ -255,7 +257,8 @@ def match_candidates_by_graph(
     images_ref_set: Set[str] = set(images_ref)
     images: List[str] = list(images_cand_set | images_ref_set)
 
-    representative_points = get_representative_points(images, exifs, reference)
+    representative_points = get_representative_points(
+        images, exifs, reference, use_opk)
 
     points = np.zeros((len(images), 2))
     for i, point in enumerate(representative_points.values()):
@@ -316,6 +319,7 @@ def match_candidates_with_bow(
     max_gps_distance: float,
     max_gps_neighbors: int,
     enforce_other_cameras: bool,
+    use_opk: bool,
 ) -> Dict[Tuple[str, str], float]:
     """Find candidate matching pairs using BoW-based distance.
 
@@ -338,6 +342,7 @@ def match_candidates_with_bow(
         reference,
         max_gps_distance,
         max_gps_neighbors,
+        use_opk,
     )
 
     return construct_pairs(results, max_neighbors, exifs, enforce_other_cameras)
@@ -351,12 +356,13 @@ def compute_bow_affinity(
     reference: geo.TopocentricConverter,
     max_gps_distance: float,
     max_gps_neighbors: int,
+    use_opk: bool,
 ) -> List[Tuple[str, List[float], List[str]]]:
     """Compute affinity scores between references and candidates
     images using BoW-based distance.
     """
     preempted_candidates, need_load = preempt_candidates(
-        images_ref, images_cand, exifs, reference, max_gps_neighbors, max_gps_distance
+        images_ref, images_cand, exifs, reference, max_gps_neighbors, max_gps_distance, use_opk
     )
 
     # construct BoW histograms
@@ -382,6 +388,7 @@ def match_candidates_with_vlad(
     max_gps_neighbors: int,
     enforce_other_cameras: bool,
     histograms: Dict[str, NDArray],
+    use_opk: bool,
 ) -> Dict[Tuple[str, str], float]:
     """Find candidate matching pairs using VLAD-based distance.
      If max_gps_distance > 0, then we use first restrain a set of
@@ -410,6 +417,7 @@ def match_candidates_with_vlad(
         max_gps_distance,
         max_gps_neighbors,
         histograms,
+        use_opk,
     )
 
     return construct_pairs(results, max_neighbors, exifs, enforce_other_cameras)
@@ -424,12 +432,13 @@ def compute_vlad_affinity(
     max_gps_distance: float,
     max_gps_neighbors: int,
     histograms: Dict[str, NDArray],
+    use_opk: bool,
 ) -> List[Tuple[str, List[float], List[str]]]:
     """Compute affinity scores between references and candidates
     images using VLAD-based distance.
     """
     preempted_candidates, need_load = preempt_candidates(
-        images_ref, images_cand, exifs, reference, max_gps_neighbors, max_gps_distance
+        images_ref, images_cand, exifs, reference, max_gps_neighbors, max_gps_distance, use_opk
     )
 
     if len(preempted_candidates) == 0:
@@ -459,6 +468,7 @@ def preempt_candidates(
     reference: geo.TopocentricConverter,
     max_gps_neighbors: int,
     max_gps_distance: float,
+    use_opk: bool,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """Preempt candidates using GPS to reduce set of images
     from which to load data to save RAM.
@@ -474,6 +484,7 @@ def preempt_candidates(
             reference,
             max_gps_neighbors,
             max_gps_distance,
+            use_opk,
         )
         preempted_cand = defaultdict(list)
         for p in gps_pairs:
@@ -630,6 +641,7 @@ def match_candidates_from_metadata(
     vlad_gps_distance = overriden_config["matching_vlad_gps_distance"]
     vlad_gps_neighbors = overriden_config["matching_vlad_gps_neighbors"]
     vlad_other_cameras = overriden_config["matching_vlad_other_cameras"]
+    use_opk = overriden_config["matching_use_opk"]
 
     data.init_reference()
     reference = data.load_reference()
@@ -666,10 +678,10 @@ def match_candidates_from_metadata(
                  for i in images_ref for j in images_cand if i != j}
     else:
         d = match_candidates_by_distance(
-            images_ref, images_cand, exifs, reference, gps_neighbors, max_distance
+            images_ref, images_cand, exifs, reference, gps_neighbors, max_distance, use_opk
         )
         g = match_candidates_by_graph(
-            images_ref, images_cand, exifs, reference, graph_rounds
+            images_ref, images_cand, exifs, reference, graph_rounds, use_opk
         )
         t = match_candidates_by_time(
             images_ref, images_cand, exifs, time_neighbors)
@@ -684,6 +696,7 @@ def match_candidates_from_metadata(
             bow_gps_distance,
             bow_gps_neighbors,
             bow_other_cameras,
+            use_opk,
         )
         v = match_candidates_with_vlad(
             data,
@@ -696,6 +709,7 @@ def match_candidates_from_metadata(
             vlad_gps_neighbors,
             vlad_other_cameras,
             {},
+            use_opk,
         )
         pairs = d | g | t | o | set(b) | set(v)
 

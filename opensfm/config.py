@@ -184,6 +184,8 @@ class OpenSfMConfig:
     matching_use_filters: bool = False
     # Use segmentation information (if available) to improve matching
     matching_use_segmentation: bool = False
+    # Use orientation (if available) to improve matching
+    matching_use_opk: bool = True
 
     ##################################
     # Params for geometric estimation
