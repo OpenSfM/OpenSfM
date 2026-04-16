@@ -9,10 +9,10 @@ from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, Union
 import exifread
 import numpy as np
 import xmltodict as x2d
-from opensfm import geometry, pygeometry
+from opensfm import pygeometry
 
 from opensfm.dataset_base import DataSetBase
-from opensfm.geo import ecef_from_lla
+from opensfm.data.camera_corrections import ypr_corrections
 from opensfm.sensors import camera_calibration, sensor_data
 from opensfm.geo import TopocentricConverter
 
@@ -525,7 +525,7 @@ class EXIF:
         )
         return 0.0
 
-    def extract_opk(self, geo: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def extract_opk(self, geo: Dict[str, Any], make: str, model: str) -> Optional[Dict[str, Any]]:
         opk = None
 
         # Can't convert from YPR to OPK without geo location
@@ -539,56 +539,65 @@ class EXIF:
         if self.has_xmp() and geo and "latitude" in geo and "longitude" in geo:
             ypr = np.array([None, None, None])
 
-            try:
-                # YPR conventions (assuming nadir camera)
-                # Yaw: 0 --> top of image points north
-                # Yaw: 90 --> top of image points east
-                # Yaw: 270 --> top of image points west
-                # Pitch: 0 --> nadir camera
-                # Pitch: 90 --> camera is looking forward
-                # Roll: 0 (assuming gimbal)
-
-                # Prioritize Gimbal, then Flight, then Camera
-                tag_sets = [
-                    (
-                        "@drone-dji:GimbalYawDegree",
-                        "@drone-dji:GimbalPitchDegree",
-                        "@drone-dji:GimbalRollDegree",
-                        True,
-                    ),
-                    (
-                        "@drone-dji:FlightYawDegree",
-                        "@drone-dji:FlightPitchDegree",
-                        "@drone-dji:FlightRollDegree",
-                        True,
-                    ),
-                    ("@Camera:Yaw", "@Camera:Pitch", "@Camera:Roll", False),
-                ]
-
-                for yaw_key, pitch_key, roll_key, offset_pitch in tag_sets:
-                    if (
-                        yaw_key in self.xmp[0]
-                        and pitch_key in self.xmp[0]
-                        and roll_key in self.xmp[0]
-                    ):
-                        ypr = np.array(
-                            [
-                                float(self.xmp[0][yaw_key]),
-                                float(self.xmp[0][pitch_key]),
-                                float(self.xmp[0][roll_key]),
-                            ]
-                        )
-                        if offset_pitch:
-                            ypr[1] += 90
-
-                        break
-
-            except ValueError:
+            apply_pitch_offset = False
+            camera_id = f"{make.strip().lower()}_{model.strip().lower()}"
+            if camera_id in ypr_corrections:
                 logger.debug(
-                    'Invalid yaw/pitch/roll tag in image file "{0:s}"'.format(
-                        self.fileobj_name
+                    "Applying YPR fix for camera {0:s}".format(camera_id))
+                ypr, apply_pitch_offset = ypr_corrections[camera_id](
+                    self.xmp[0], geo)
+            else:
+                try:
+                    # YPR conventions (assuming nadir camera)
+                    # Yaw: 0 --> top of image points north
+                    # Yaw: 90 --> top of image points east
+                    # Yaw: 270 --> top of image points west
+                    # Pitch: 0 --> nadir camera
+                    # Pitch: 90 --> camera is looking forward
+                    # Roll: 0 (assuming gimbal)
+
+                    # Prioritize Gimbal, then Flight, then Camera
+                    tag_sets = [
+                        (
+                            "@drone-dji:GimbalYawDegree",
+                            "@drone-dji:GimbalPitchDegree",
+                            "@drone-dji:GimbalRollDegree",
+                            True,
+                        ),
+                        (
+                            "@drone-dji:FlightYawDegree",
+                            "@drone-dji:FlightPitchDegree",
+                            "@drone-dji:FlightRollDegree",
+                            True,
+                        ),
+                        ("@Camera:Yaw", "@Camera:Pitch", "@Camera:Roll", False),
+                    ]
+
+                    for yaw_key, pitch_key, roll_key, offset_pitch in tag_sets:
+                        if (
+                            yaw_key in self.xmp[0]
+                            and pitch_key in self.xmp[0]
+                            and roll_key in self.xmp[0]
+                        ):
+                            ypr = np.array(
+                                [
+                                    float(self.xmp[0][yaw_key]),
+                                    float(self.xmp[0][pitch_key]),
+                                    float(self.xmp[0][roll_key]),
+                                ]
+                            )
+
+                            if offset_pitch:
+                                apply_pitch_offset = True
+
+                            break
+
+                except ValueError:
+                    logger.debug(
+                        'Invalid yaw/pitch/roll tag in image file "{0:s}"'.format(
+                            self.fileobj_name
+                        )
                     )
-                )
 
             if not any(v is None for v in ypr):
                 ypr = np.radians(ypr)
@@ -622,10 +631,9 @@ class EXIF:
                     ]
                 )
 
-                # Flip X and Z for 180 degree roll
-                if math.isclose(abs(ypr[2]), math.pi, abs_tol=1e-3):
-                    cnb[:, 0] *= -1
-                    cnb[:, 2] *= -1
+                # Apply pitch offset mapping safely after independent Gimbal YPR rotations.
+                if apply_pitch_offset:
+                    cnb = cnb.dot(np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]))
 
                 # Convert between image and body coordinates
                 # Top of image pixels point to flying direction
@@ -683,7 +691,7 @@ class EXIF:
         orientation = self.extract_orientation()
         geo = self.extract_geo()
         capture_time = self.extract_capture_time()
-        opk = self.extract_opk(geo)
+        opk = self.extract_opk(geo, make, model)
         d = {
             "make": make,
             "model": model,
