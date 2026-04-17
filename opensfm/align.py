@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import multiview, pygeometry, pymap, transformations as tf, types
+from opensfm import geometry, multiview, pygeometry, pymap, transformations as tf, types
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -71,7 +71,8 @@ def apply_similarity(
 
     # Scale rig cameras
     for rig_camera in reconstruction.rig_cameras.values():
-        apply_similarity_pose(rig_camera.pose, s, np.eye(3), np.array([0, 0, 0]))
+        apply_similarity_pose(rig_camera.pose, s,
+                              np.eye(3), np.array([0, 0, 0]))
 
 
 def compute_reconstruction_similarity(
@@ -98,11 +99,13 @@ def compute_reconstruction_similarity(
         )
     res = None
     if align_method == "orientation_prior":
+        plane = detect_orientation_prior(reconstruction, config)
         res = compute_orientation_prior_similarity(
-            reconstruction, config, gcp, use_gps, use_scale
+            reconstruction, config, gcp, use_gps, use_scale, plane
         )
     elif align_method == "naive":
-        res = compute_naive_similarity(config, reconstruction, gcp, use_gps, use_scale)
+        res = compute_naive_similarity(
+            config, reconstruction, gcp, use_gps, use_scale)
 
     if not res:
         return None
@@ -214,7 +217,8 @@ def compute_naive_similarity(
 
     # Will be up to some unknown rotation
     if len(X) == 2:
-        logger.warning("Only 2 constraints. Will be up to some unknown rotation.")
+        logger.warning(
+            "Only 2 constraints. Will be up to some unknown rotation.")
         X.append(X[1])
         Xp.append(Xp[1])
 
@@ -235,6 +239,7 @@ def compute_orientation_prior_similarity(
     gcp: List[pymap.GroundControlPoint],
     use_gps: bool,
     use_scale: bool,
+    plane: NDArray,
 ) -> Optional[Tuple[float, NDArray, NDArray]]:
     """Compute similarity with GPS data assuming particular a camera orientation.
 
@@ -250,10 +255,9 @@ def compute_orientation_prior_similarity(
      - horizontal: assumes cameras are looking towards the horizon
      - vertical: assumes cameras are looking down towards the ground
     """
-    p = estimate_ground_plane(reconstruction, config)
-    if p is None:
+    if plane is None:
         return None
-    Rplane = multiview.plane_horizontalling_rotation(p)
+    Rplane = multiview.plane_horizontalling_rotation(plane)
     if Rplane is None:
         return None
 
@@ -318,7 +322,8 @@ def set_gps_bias(
         reconstruction, gcp, config, False, use_scale
     )
     if not gps_bias:
-        logger.warning("Cannot align on GCPs only, GPS bias won't be compensated.")
+        logger.warning(
+            "Cannot align on GCPs only, GPS bias won't be compensated.")
         return None
 
     # Align the reconstruction on GCPs ONLY
@@ -346,7 +351,8 @@ def set_gps_bias(
         )
 
     if any(True for x in per_camera_transform.values() if not x):
-        logger.warning("Cannot compensate some shots, GPS bias won't be compensated.")
+        logger.warning(
+            "Cannot compensate some shots, GPS bias won't be compensated.")
     else:
         for camera_id, transform in per_camera_transform.items():
             s, A, b = transform
@@ -361,6 +367,39 @@ def set_gps_bias(
     return gps_bias
 
 
+def detect_orientation_prior(
+    reconstruction: types.Reconstruction, config: Dict[str, Any]
+) -> Optional[NDArray]:
+    """Detect plane orientation from OPK data or fallback."""
+    onplane, verticals, ground_points = [], [], []
+    has_opk = False
+    for shot in reconstruction.shots.values():
+        ground_points.append(shot.pose.get_origin())
+        if shot.metadata.opk_angles.has_value:
+            has_opk = True
+            opk = shot.metadata.opk_angles.value
+            R = geometry.rotation_from_opk(
+                math.radians(opk[0]), math.radians(
+                    opk[1]), math.radians(opk[2])
+            )
+            onplane.append(R[0, :])
+            onplane.append(R[1, :])
+            verticals.append(-R[2, :])
+
+    if has_opk and len(verticals) > 0:
+        # We only use pose.get_origin() for finding the 4th component (the offset)
+        # passing the mean origin ensures the normal only depends on the OPK vectors
+        mean_origin = np.array([np.mean(ground_points, axis=0)])
+        try:
+            return multiview.fit_plane(
+                mean_origin, np.array(onplane), np.array(verticals)
+            )
+        except ValueError:
+            pass
+
+    return estimate_ground_plane(reconstruction, config)
+
+
 def estimate_ground_plane(
     reconstruction: types.Reconstruction, config: Dict[str, Any]
 ) -> Optional[NDArray]:
@@ -370,6 +409,17 @@ def estimate_ground_plane(
     align_orientation_prior option to enforce cameras to look
     horizontally or vertically.
     """
+    if detect_alignment_constraints(config, reconstruction, [], True) == "naive":
+        ground_points = []
+        for shot in reconstruction.shots.values():
+            ground_points.append(shot.pose.get_origin())
+        ground_points_arr = np.array(ground_points)
+        ground_points_arr -= ground_points_arr.mean(axis=0)
+        try:
+            return multiview.fit_plane(ground_points_arr, None, None)
+        except ValueError:
+            pass
+
     orientation_type = config["align_orientation_prior"]
     onplane, verticals, ground_points = [], [], []
     for shot in reconstruction.shots.values():
@@ -430,7 +480,8 @@ def get_horizontal_and_vertical_directions(
         return -R[1, :], -R[0, :], -R[2, :]
     if orientation == 8:
         return R[1, :], -R[0, :], R[2, :]
-    logger.error("unknown orientation {0}. Using 1 instead".format(orientation))
+    logger.error(
+        "unknown orientation {0}. Using 1 instead".format(orientation))
     return R[0, :], R[1, :], R[2, :]
 
 
