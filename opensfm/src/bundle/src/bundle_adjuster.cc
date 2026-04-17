@@ -10,6 +10,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 #include "bundle/data/bias.h"
 
@@ -17,6 +18,34 @@ namespace {
 bool IsRigCameraUseful(bundle::RigCamera& rig_camera) {
   return !(rig_camera.GetParametersToOptimize().empty() &&
            rig_camera.GetValueData().isConstant(0.));
+}
+
+// Apply parameter locking to a Ceres parameter block based on the
+// params_to_optimize list:
+// - empty: lock all (SetParameterBlockConstant)
+// - full (size == total_size): leave fully free (no constraint)
+// - partial: use SubsetManifold to fix the complement indices
+void ApplyParameterLocking(ceres::Problem& problem, double* data,
+                           int total_size,
+                           const std::vector<int>& params_to_optimize) {
+  if (params_to_optimize.empty()) {
+    problem.SetParameterBlockConstant(data);
+    return;
+  }
+  if (static_cast<int>(params_to_optimize.size()) == total_size) {
+    return;
+  }
+  // Compute constant indices as complement of params_to_optimize
+  std::vector<int> constant_indices;
+  std::unordered_set<int> free_set(params_to_optimize.begin(),
+                                   params_to_optimize.end());
+  for (int i = 0; i < total_size; ++i) {
+    if (free_set.find(i) == free_set.end()) {
+      constant_indices.push_back(i);
+    }
+  }
+  problem.SetManifold(data,
+                      new ceres::SubsetManifold(total_size, constant_indices));
 }
 }  // namespace
 
@@ -97,13 +126,15 @@ void BundleAdjuster::AddCamera(const std::string& id,
   bias_data.SetParametersToOptimize({});
 }
 
-void BundleAdjuster::SetCameraBias(const std::string& camera_id,
-                                   const geometry::Similarity& bias) {
+void BundleAdjuster::SetCameraBias(
+    const std::string& camera_id, const geometry::Similarity& bias,
+    const std::vector<int>& parameters_to_optimize) {
   auto bias_exists = bias_.find(camera_id);
   if (bias_exists == bias_.end()) {
     throw std::runtime_error("Camera " + camera_id + " doesn't exist.");
   }
   bias_exists->second = Similarity(camera_id, bias);
+  bias_exists->second.SetParametersToOptimize(parameters_to_optimize);
 }
 
 void BundleAdjuster::AddRigInstance(
@@ -614,11 +645,8 @@ void BundleAdjuster::Run() {
   for (auto& [_, cam] : cameras_) {
     auto& data = cam.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
-
-    // Lock parameters based on bitmask of parameters : only constant for now
-    if (cam.GetParametersToOptimize().empty()) {
-      problem.SetParameterBlockConstant(data.data());
-    }
+    ApplyParameterLocking(problem, data.data(), data.size(),
+                          cam.GetParametersToOptimize());
 
     // Add a barrier for constraining transition of dual to stay in [0, 1]
     const auto camera = cam.GetValue();
@@ -644,44 +672,32 @@ void BundleAdjuster::Run() {
   for (auto& b : bias_) {
     auto& data = b.second.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
-
-    // Lock parameters based on bitmask of parameters : only constant for now
-    if (b.second.GetParametersToOptimize().empty()) {
-      problem.SetParameterBlockConstant(data.data());
-    }
+    ApplyParameterLocking(problem, data.data(), data.size(),
+                          b.second.GetParametersToOptimize());
   }
 
   // Add rig cameras
   for (auto& rc : rig_cameras_) {
     auto& data = rc.second.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
-
-    // Lock parameters based on bitmask of parameters : only constant for now
-    if (rc.second.GetParametersToOptimize().empty()) {
-      problem.SetParameterBlockConstant(data.data());
-    }
+    ApplyParameterLocking(problem, data.data(), data.size(),
+                          rc.second.GetParametersToOptimize());
   }
 
   // Add rig instances
   for (auto& ri : rig_instances_) {
     auto& data = ri.second.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
-
-    // Lock parameters based on bitmask of parameters : only constant for now
-    if (ri.second.GetParametersToOptimize().empty()) {
-      problem.SetParameterBlockConstant(data.data());
-    }
+    ApplyParameterLocking(problem, data.data(), data.size(),
+                          ri.second.GetParametersToOptimize());
   }
 
   // Add points
   for (auto& p : points_) {
     auto& data = p.second.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
-
-    // Lock parameters based on bitmask of parameters : only constant for now
-    if (p.second.GetParametersToOptimize().empty()) {
-      problem.SetParameterBlockConstant(data.data());
-    }
+    ApplyParameterLocking(problem, data.data(), data.size(),
+                          p.second.GetParametersToOptimize());
   }
 
   // Reconstructions

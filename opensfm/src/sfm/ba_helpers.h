@@ -1,5 +1,6 @@
 #pragma once
 #include <bundle/bundle_adjuster.h>
+#include <bundle/data/parameter_mask.h>
 #include <map/ground_control_points.h>
 #include <map/map.h>
 #include <pybind11/pybind11.h>
@@ -22,8 +23,7 @@ class BAHelpers {
       const std::unordered_map<map::CameraId, geometry::Camera>& camera_priors,
       const std::unordered_map<map::RigCameraId, map::RigCamera>&
           rig_camera_priors,
-      const AlignedVector<map::GroundControlPoint>& gcp,
-      int grid_size,
+      const AlignedVector<map::GroundControlPoint>& gcp, int grid_size,
       const py::dict& config);
 
   static py::tuple BundleLocal(
@@ -32,8 +32,7 @@ class BAHelpers {
       const std::unordered_map<map::RigCameraId, map::RigCamera>&
           rig_camera_priors,
       const AlignedVector<map::GroundControlPoint>& gcp,
-      const map::ShotId& central_shot_id, 
-      int grid_size,
+      const map::ShotId& central_shot_id, int grid_size,
       const py::dict& config);
 
   static py::dict BundleShotPoses(
@@ -66,9 +65,8 @@ class BAHelpers {
       const py::dict& config);
 
   static TracksSelection SelectTracksGrid(
-    map::Map& map,
-    const std::unordered_set<map::ShotId>& shot_ids,
-    size_t grid_size);
+      map::Map& map, const std::unordered_set<map::ShotId>& shot_ids,
+      size_t grid_size);
 
  private:
   static std::unordered_set<map::Shot*> DirectShotNeighbors(
@@ -77,11 +75,14 @@ class BAHelpers {
   static bool TriangulateGCP(
       const map::GroundControlPoint& point,
       const std::unordered_map<map::ShotId, map::Shot>& shots,
-      float reproj_threshold,
-      Vec3d& coordinates);
+      float reproj_threshold, Vec3d& coordinates);
 
   static void AlignmentConstraints(
       const map::Map& map, const py::dict& config,
       const AlignedVector<map::GroundControlPoint>& gcp, MatX3d& Xp, MatX3d& X);
+
+  static bundle::SimilarityParameterMask DetermineGCPBiasParameters(
+      const map::Map& map, const AlignedVector<map::GroundControlPoint>& gcp,
+      const py::dict& config);
 };
 }  // namespace sfm

@@ -1,4 +1,5 @@
 #include <bundle/bundle_adjuster.h>
+#include <bundle/data/parameter_mask.h>
 #include <bundle/reconstruction_alignment.h>
 #include <foundation/python_types.h>
 #include <pybind11/eigen.h>
@@ -8,6 +9,19 @@
 PYBIND11_MODULE(pybundle, m) {
   py::module::import("opensfm.pygeometry");
   py::module::import("opensfm.pymap");
+
+  py::enum_<bundle::SimilarityParameterMask>(m, "SimilarityParameterMask")
+      .value("None", bundle::SimilarityParameterMask::None)
+      .value("Tx", bundle::SimilarityParameterMask::Tx)
+      .value("Ty", bundle::SimilarityParameterMask::Ty)
+      .value("Tz", bundle::SimilarityParameterMask::Tz)
+      .value("Rx", bundle::SimilarityParameterMask::Rx)
+      .value("Ry", bundle::SimilarityParameterMask::Ry)
+      .value("Rz", bundle::SimilarityParameterMask::Rz)
+      .value("Scale", bundle::SimilarityParameterMask::Scale)
+      .value("Translation", bundle::SimilarityParameterMask::Translation)
+      .value("Rotation", bundle::SimilarityParameterMask::Rotation)
+      .value("All", bundle::SimilarityParameterMask::All);
 
   py::class_<bundle::RelativeMotion>(m, "RelativeMotion")
       .def(py::init<const std::string&, const std::string&,
@@ -52,6 +66,10 @@ PYBIND11_MODULE(pybundle, m) {
            &bundle::BundleAdjuster::SetRelativeMotionLossFunction)
       .def("add_camera", &bundle::BundleAdjuster::AddCamera)
       .def("get_camera", &bundle::BundleAdjuster::GetCamera)
+      .def("set_camera_bias", &bundle::BundleAdjuster::SetCameraBias,
+           py::arg("id"), py::arg("bias"),
+           py::arg("parameters_to_optimize") = std::vector<int>{})
+      .def("get_bias", &bundle::BundleAdjuster::GetBias)
       .def("add_rig_camera", &bundle::BundleAdjuster::AddRigCamera)
       .def("get_rig_camera_pose",
            [](const bundle::BundleAdjuster& ba,

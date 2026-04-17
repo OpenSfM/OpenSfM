@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bundle/data/data.h>
+#include <bundle/data/parameter_mask.h>
 #include <bundle/data/pose.h>
 #include <bundle/error/position_functors.h>
 #include <geometry/similarity.h>

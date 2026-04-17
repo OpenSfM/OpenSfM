@@ -14,6 +14,26 @@
 #include "geo/geo.h"
 #include "map/defines.h"
 
+namespace {
+// Returns true if the rows of X (Nx3) are approximately collinear.
+// Requires X.rows() >= 3.
+bool ArePointsCollinear(const MatX3d& X) {
+  const Vec3d X_mean = X.colwise().mean();
+  const MatX3d X_zero = X.rowwise() - X_mean.transpose();
+  const Mat3d input = X_zero.transpose() * X_zero;
+  Eigen::SelfAdjointEigenSolver<MatXd> ses(input, Eigen::EigenvaluesOnly);
+  const Vec3d evals = ses.eigenvalues();
+  const auto ratio_1st_2nd = std::abs(evals[2] / evals[1]);
+  constexpr double epsilon_abs = 1e-10;
+  constexpr double epsilon_ratio = 5e3;
+  int cond1 = 0;
+  for (int i = 0; i < 3; ++i) {
+    cond1 += (evals[i] < epsilon_abs) ? 1 : 0;
+  }
+  return cond1 > 1 || ratio_1st_2nd > epsilon_ratio;
+}
+}  // namespace
+
 namespace sfm {
 std::pair<std::unordered_set<map::ShotId>, std::unordered_set<map::ShotId>>
 BAHelpers::ShotNeighborhoodIds(map::Map& map,
@@ -926,8 +946,10 @@ py::dict BAHelpers::Bundle(
 
   if (config["bundle_compensate_gps_bias"].cast<bool>() && !gcp.empty()) {
     const auto& biases = map.GetBiases();
+    const auto bias_mask = DetermineGCPBiasParameters(map, gcp, config);
+    const auto bias_indices = bundle::SimilarityMaskToIndices(bias_mask);
     for (const auto& camera : map.GetCameras()) {
-      ba.SetCameraBias(camera.first, biases.at(camera.first));
+      ba.SetCameraBias(camera.first, biases.at(camera.first), bias_indices);
     }
   }
 
@@ -1126,23 +1148,51 @@ std::string BAHelpers::DetectAlignmentConstraints(
   if (X.rows() < 3) {
     return "orientation_prior";
   }
-  const Vec3d X_mean = X.colwise().mean();
-  const MatX3d X_zero = X.rowwise() - X_mean.transpose();
-  const Mat3d input = X_zero.transpose() * X_zero;
-  Eigen::SelfAdjointEigenSolver<MatXd> ses(input, Eigen::EigenvaluesOnly);
-  const Vec3d evals = ses.eigenvalues();
-  const auto ratio_1st_2nd = std::abs(evals[2] / evals[1]);
-  constexpr double epsilon_abs = 1e-10;
-  constexpr double epsilon_ratio = 5e3;
-  int cond1 = 0;
-  for (int i = 0; i < 3; ++i) {
-    cond1 += (evals[i] < epsilon_abs) ? 1 : 0;
-  }
-  const bool is_line = cond1 > 1 || ratio_1st_2nd > epsilon_ratio;
-  if (is_line) {
+  if (ArePointsCollinear(X)) {
     return "orientation_prior";
   }
 
   return "naive";
+}
+
+bundle::SimilarityParameterMask BAHelpers::DetermineGCPBiasParameters(
+    const map::Map& map, const AlignedVector<map::GroundControlPoint>& gcp,
+    const py::dict& config) {
+  using Mask = bundle::SimilarityParameterMask;
+
+  const auto& shots = map.GetShots();
+  const float reproj_threshold =
+      config["gcp_reprojection_error_threshold"].cast<float>();
+
+  // Triangulate GCPs and collect their 3D positions
+  std::vector<Vec3d> gcp_positions;
+  for (const auto& point : gcp) {
+    Vec3d coordinates;
+    if (TriangulateGCP(point, shots, reproj_threshold, coordinates)) {
+      gcp_positions.push_back(coordinates);
+    }
+  }
+
+  const size_t n = gcp_positions.size();
+  if (n == 0) {
+    return Mask::All;
+  }
+  if (n == 1) {
+    return Mask::Translation;
+  }
+  if (n == 2) {
+    return Mask::Translation | Mask::Scale;
+  }
+
+  // 3+ GCPs: check spatial conditioning
+  MatX3d X(n, 3);
+  for (size_t i = 0; i < n; ++i) {
+    X.row(i) = gcp_positions[i];
+  }
+  if (ArePointsCollinear(X)) {
+    return Mask::Translation | Mask::Scale;
+  }
+
+  return Mask::All;
 }
 }  // namespace sfm

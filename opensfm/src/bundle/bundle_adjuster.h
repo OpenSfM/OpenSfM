@@ -177,7 +177,8 @@ class BundleAdjuster {
   Point* AddPoint(const std::string& id, const Vec3d& position, bool constant);
   void AddPointPrior(const std::string& id, const Vec3d& position,
                      const Vec3d& std_deviation, bool has_altitude_prior);
-  void SetCameraBias(const std::string& id, const geometry::Similarity& bias);
+  void SetCameraBias(const std::string& id, const geometry::Similarity& bias,
+                     const std::vector<int>& parameters_to_optimize = {});
 
   // Rigs
   void AddRigInstance(
