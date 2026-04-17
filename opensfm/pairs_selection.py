@@ -160,11 +160,27 @@ def get_representative_points(
         origin[image], directions[image] = map_method[method_id](
             exif, reference)
 
+        relative_altitudes = [exif["relative_altitude"]
+                              for exif in exifs.values() if "relative_altitude" in exif]
     if had_orientation:
-        altitude = find_best_altitude(origin, directions)
-        logger.info(f"Altitude for orientation based matching {altitude}")
-        directions_scaled = {k: v / DEFAULT_Z *
-                             altitude for k, v in directions.items()}
+        if len(relative_altitudes) > 0:
+            average_relative_altitude = np.mean(relative_altitudes)
+            all_relative_altitudes = {k: exif["relative_altitude"]
+                                      if "relative_altitude" in exif else average_relative_altitude
+                                      for k, exif in exifs.items()}
+            logger.info(
+                "Using EXIF relative_altitude for orientation based matching")
+            directions_scaled = {
+                k: v / DEFAULT_Z * all_relative_altitudes[k]
+                for k, v in directions.items()
+            }
+        else:
+            altitude = find_best_altitude(origin, directions)
+            logger.info(
+                f"Altitude for orientation based matching {altitude}")
+            directions_scaled = {k: v / DEFAULT_Z *
+                                 altitude for k, v in directions.items()}
+
         points = {k: origin[k] + directions_scaled[k] for k in images}
     else:
         points = origin

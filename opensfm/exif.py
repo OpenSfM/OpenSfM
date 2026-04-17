@@ -387,6 +387,17 @@ class EXIF:
     def has_dji_altitude(self) -> bool:
         return self.has_xmp() and "@drone-dji:AbsoluteAltitude" in self.xmp[0]
 
+    def has_dji_relative_altitude(self) -> bool:
+        return self.has_xmp() and "@drone-dji:RelativeAltitude" in self.xmp[0]
+
+    def extract_dji_relative_altitude(self) -> float:
+        return float(self.xmp[0]["@drone-dji:RelativeAltitude"])
+
+    def extract_relative_altitude(self) -> Optional[float]:
+        if self.has_dji_relative_altitude():
+            return self.extract_dji_relative_altitude()
+        return None
+
     def extract_lon_lat(self) -> Tuple[Optional[float], Optional[float]]:
         if self.has_dji_latlon():
             lon, lat = self.extract_dji_lon_lat()
@@ -703,6 +714,10 @@ class EXIF:
             "capture_time": capture_time,
             "gps": geo,
         }
+
+        maybe_relative_altitude = self.extract_relative_altitude()
+        if maybe_relative_altitude is not None:
+            d["relative_altitude"] = maybe_relative_altitude
         if opk:
             d["opk"] = opk
 
