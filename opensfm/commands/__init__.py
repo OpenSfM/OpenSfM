@@ -19,7 +19,6 @@ from . import (
     export_ply,
     export_pmvs,
     export_report,
-    export_rerun,
     export_visualsfm,
     extend_reconstruction,
     extract_metadata,
@@ -53,8 +52,13 @@ opensfm_commands: List[ModuleType] = [
     export_colmap,
     export_geocoords,
     export_report,
-    export_rerun,
     extend_reconstruction,
     create_submodels,
     align_submodels,
 ]
+
+try:
+    from . import export_rerun
+    opensfm_commands.append(export_rerun)
+except ImportError:
+    pass

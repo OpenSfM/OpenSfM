@@ -20,9 +20,16 @@ from opensfm.actions import export_geocoords
 
 
 import matplotlib.cm as cm
-import rerun as rr
-import rerun.blueprint as rrb
 from scipy.spatial import Delaunay, KDTree
+
+try:
+    import rerun as rr
+    import rerun.blueprint as rrb
+except ImportError as _rerun_import_error:
+    raise ImportError(
+        "The 'rerun-sdk' package is required to use export_rerun. "
+        "Install it with: pip install rerun-sdk"
+    ) from _rerun_import_error
 
 logger: logging.Logger = logging.getLogger(__name__)
 
