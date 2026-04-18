@@ -105,7 +105,7 @@ def test_dji_parsing_opk(dji_xmp_data_gimbal, monkeypatch):
     alt = e.extract_altitude()
     geo_dict = {"latitude": lat, "longitude": lon, "altitude": alt}
 
-    opk = e.extract_opk(geo_dict)
+    opk = e.extract_opk(geo_dict, e.extract_make(), e.extract_model())
     assert opk is not None
 
 
@@ -121,7 +121,7 @@ def test_dji_parsing_flight(dji_xmp_data_flight, monkeypatch):
 
     geo_dict = {"latitude": lat, "longitude": lon, "altitude": alt}
 
-    opk = e.extract_opk(geo_dict)
+    opk = e.extract_opk(geo_dict, e.extract_make(), e.extract_model())
     assert opk is not None
 
 
@@ -130,7 +130,7 @@ def test_dji_parsing_camera(dji_xmp_data_camera, monkeypatch):
 
     geo_dict = {"latitude": 2.0, "longitude": 1.0, "altitude": 3.0}
 
-    opk = e.extract_opk(geo_dict)
+    opk = e.extract_opk(geo_dict, e.extract_make(), e.extract_model())
     assert opk is not None
 
 
@@ -147,7 +147,7 @@ def test_dji_parsing_none(monkeypatch):
     assert not e.has_dji_altitude()
 
     geo_dict = {"latitude": 0, "longitude": 0, "altitude": 0}
-    opk = e.extract_opk(geo_dict)
+    opk = e.extract_opk(geo_dict, e.extract_make(), e.extract_model())
     assert opk is None
 
 

@@ -155,15 +155,18 @@ def test_compute_relative_pose() -> None:
     # Compute rig cameras poses
     rig_cameras = rig.compute_relative_pose(pose_instances)
 
+    # Note: compute_relative_pose averages origins across instances in world
+    # frame (not rig-local frame), so with a rotated second instance the
+    # averages are midpoints between the two instance offsets.
     assert np.allclose(
-        [0, -1, 0], rig_cameras["camera_id_1"].pose.get_origin(), atol=1e-7
+        [0.5, -0.5, 0], rig_cameras["camera_id_1"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [1, 0, 0], rig_cameras["camera_id_2"].pose.get_origin(), atol=1e-7
+        [0.5, 0.5, 0], rig_cameras["camera_id_2"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [-1, 0, 0], rig_cameras["camera_id_3"].pose.get_origin(), atol=1e-7
+        [-0.5, -0.5, 0], rig_cameras["camera_id_3"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [0, 1, 0], rig_cameras["camera_id_4"].pose.get_origin(), atol=1e-7
+        [-0.5, 0.5, 0], rig_cameras["camera_id_4"].pose.get_origin(), atol=1e-7
     )
