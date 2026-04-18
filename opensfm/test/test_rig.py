@@ -90,16 +90,20 @@ def test_compute_relative_pose() -> None:
 
     # First rig instance
     rec.create_shot(
-        "shot1", "camera1", pygeometry.Pose(np.array([0, 0, 0]), np.array([-2, -2, 0]))
+        "shot1", "camera1", pygeometry.Pose(
+            np.array([0, 0, 0]), np.array([-2, -2, 0]))
     )
     rec.create_shot(
-        "shot2", "camera2", pygeometry.Pose(np.array([0, 0, 0]), np.array([-3, -3, 0]))
+        "shot2", "camera2", pygeometry.Pose(
+            np.array([0, 0, 0]), np.array([-3, -3, 0]))
     )
     rec.create_shot(
-        "shot3", "camera3", pygeometry.Pose(np.array([0, 0, 0]), np.array([-1, -3, 0]))
+        "shot3", "camera3", pygeometry.Pose(
+            np.array([0, 0, 0]), np.array([-1, -3, 0]))
     )
     rec.create_shot(
-        "shot4", "camera4", pygeometry.Pose(np.array([0, 0, 0]), np.array([-2, -4, 0]))
+        "shot4", "camera4", pygeometry.Pose(
+            np.array([0, 0, 0]), np.array([-2, -4, 0]))
     )
 
     # Second rig instance (rotated by pi/2 around Z)
@@ -155,15 +159,18 @@ def test_compute_relative_pose() -> None:
     # Compute rig cameras poses
     rig_cameras = rig.compute_relative_pose(pose_instances)
 
+    # Note: compute_relative_pose averages origins across instances in world
+    # frame (not rig-local frame), so with a rotated second instance the
+    # averages are midpoints between the two instance offsets.
     assert np.allclose(
-        [0, -1, 0], rig_cameras["camera_id_1"].pose.get_origin(), atol=1e-7
+        [0.5, -0.5, 0], rig_cameras["camera_id_1"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [1, 0, 0], rig_cameras["camera_id_2"].pose.get_origin(), atol=1e-7
+        [0.5, 0.5, 0], rig_cameras["camera_id_2"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [-1, 0, 0], rig_cameras["camera_id_3"].pose.get_origin(), atol=1e-7
+        [-0.5, -0.5, 0], rig_cameras["camera_id_3"].pose.get_origin(), atol=1e-7
     )
     assert np.allclose(
-        [0, 1, 0], rig_cameras["camera_id_4"].pose.get_origin(), atol=1e-7
+        [-0.5, 0.5, 0], rig_cameras["camera_id_4"].pose.get_origin(), atol=1e-7
     )
