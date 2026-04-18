@@ -86,7 +86,8 @@ def compute_reconstruction_similarity(
 
     Config parameter `align_method` can be used to choose the alignment method.
     Accepted values are
-     - navie: does a direct 3D-3D fit
+     - naive: does a direct 3D-3D fit
+     - auto: automatically picks between naive and orientation_prior, depending on the distribution of the GPS/GCP data
      - orientation_prior: assumes a particular camera orientation
     """
     align_method = config["align_method"]
@@ -161,6 +162,10 @@ def detect_alignment_constraints(
     """
 
     X, Xp = alignment_constraints(config, reconstruction, gcp, use_gps)
+    if len(X) == 0:
+        logger.warning(
+            "Cannot find any GPS or GCP constraint. Using no alignment.")
+        return "none"
     if len(X) < 3:
         return "orientation_prior"
 
@@ -367,35 +372,68 @@ def set_gps_bias(
     return gps_bias
 
 
+def fit_plane_from_opk(
+    verticals: List[NDArray], origins: List[NDArray]
+) -> Optional[NDArray]:
+    """Fit a ground plane from OPK-derived vertical directions and shot origins.
+
+    Uses a RANSAC loop with a 30-degree angle threshold to find the
+    largest consensus set of verticals, then averages them into a plane normal.
+    The plane offset is determined by projecting shot origins onto the normal.
+    """
+    verticals_arr = np.array(verticals)
+    angle_threshold = math.radians(15)
+    cos_threshold = math.cos(angle_threshold)
+
+    best_inliers: List[int] = []
+    for i in range(len(verticals_arr)):
+        candidate = verticals_arr[i]
+        candidate = candidate / np.linalg.norm(candidate)
+        dots = verticals_arr @ candidate
+        inliers = [j for j, d in enumerate(dots) if d >= cos_threshold]
+        if len(inliers) > len(best_inliers):
+            best_inliers = inliers
+
+    if not best_inliers:
+        return None
+
+    avg_normal = np.mean(verticals_arr[best_inliers], axis=0)
+    norm = np.linalg.norm(avg_normal)
+    if norm < 1e-10:
+        return None
+    avg_normal /= norm
+
+    # Ground plane altitude from shot origins projected onto the normal
+    origins_arr = np.array(origins)
+    altitude = float(np.mean(origins_arr @ avg_normal))
+    return np.append(avg_normal, -altitude)
+
+
 def detect_orientation_prior(
     reconstruction: types.Reconstruction, config: Dict[str, Any]
 ) -> Optional[NDArray]:
     """Detect plane orientation from OPK data or fallback."""
-    onplane, verticals, ground_points = [], [], []
+    verticals = []
+    origins = []
     has_opk = False
     for shot in reconstruction.shots.values():
-        ground_points.append(shot.pose.get_origin())
+        origins.append(shot.pose.get_origin())
         if shot.metadata.opk_angles.has_value:
             has_opk = True
             opk = shot.metadata.opk_angles.value
-            R = geometry.rotation_from_opk(
+            R_opk = geometry.rotation_from_opk(
                 math.radians(opk[0]), math.radians(
                     opk[1]), math.radians(opk[2])
             )
-            onplane.append(R[0, :])
-            onplane.append(R[1, :])
-            verticals.append(-R[2, :])
+            R_pose = shot.pose.get_rotation_matrix()
+            # R_opk[:,2] is ENU Up [0,0,1] in camera frame;
+            # R_pose.T brings it from camera frame to reconstruction frame.
+            verticals.append(R_pose.T @ R_opk[:, 2])
 
     if has_opk and len(verticals) > 0:
-        # We only use pose.get_origin() for finding the 4th component (the offset)
-        # passing the mean origin ensures the normal only depends on the OPK vectors
-        mean_origin = np.array([np.mean(ground_points, axis=0)])
-        try:
-            return multiview.fit_plane(
-                mean_origin, np.array(onplane), np.array(verticals)
-            )
-        except ValueError:
-            pass
+        plane = fit_plane_from_opk(verticals, origins)
+        if plane is not None:
+            return plane
 
     return estimate_ground_plane(reconstruction, config)
 
