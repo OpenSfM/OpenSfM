@@ -533,6 +533,22 @@ def extract_features_hahog(
     logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
     return points, desc
 
+def extract_features_dspsift(
+    image: np.ndarray, config: Dict[str, Any], features_count: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    t = time.time()
+
+    points, desc = pyfeatures.dspsift(
+        image.astype(np.float32) / 255,  # VlFeat expects pixel values between 0, 1
+        peak_threshold=config["dspsift_peak_threshold"],
+        edge_threshold=config["dspsift_edge_threshold"],
+        target_num_features=features_count,
+        feature_root=bool(config["feature_root"]),
+        estimate_affine_shape=False,
+    )
+
+    logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
+    return points, desc
 
 def extract_features_orb(
     image: NDArray, config: Dict[str, Any], features_count: int
@@ -618,9 +634,11 @@ def extract_features(
         points, desc = extract_features_hahog(image_gray, config, features_count)
     elif feature_type == "ORB":
         points, desc = extract_features_orb(image_gray, config, features_count)
+    elif feature_type == 'DSPSIFT':
+        points, desc = extract_features_dspsift(image_gray, config, features_count)
     else:
         raise ValueError(
-            "Unknown feature type (must be SURF, SIFT, AKAZE, HAHOG or ORB)"
+            "Unknown feature type (must be SURF, SIFT, AKAZE, HAHOG, ORB or DSPSIFT)"
         )
 
     xs = points[:, 0].round().astype(int)
