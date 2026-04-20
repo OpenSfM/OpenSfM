@@ -107,6 +107,8 @@ def compute_reconstruction_similarity(
     elif align_method == "naive":
         res = compute_naive_similarity(
             config, reconstruction, gcp, use_gps, use_scale)
+    elif align_method == "none":
+        return None
 
     if not res:
         return None
