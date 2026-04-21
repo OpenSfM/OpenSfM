@@ -3,11 +3,14 @@
 
 import logging
 import os
+import platform
 import shutil
 import subprocess
-from typing import List
+from typing import List, Optional, Tuple
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+CONDA_ENV_PREFIX = "opensfm-bench-"
 
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "pgm", "pnm", "gif"}
 
@@ -68,30 +71,96 @@ def setup_worktree(commit: str, repo_root: str) -> str:
     return worktree_path
 
 
-def build_in_worktree(worktree_path: str) -> None:
-    """Build OpenSfM in the worktree via pip install -e ."""
-    logger.info("Building OpenSfM in worktree %s", worktree_path)
+def _conda_env_name(commit_hash: str) -> str:
+    """Generate a unique conda environment name for a benchmark run."""
+    return f"{CONDA_ENV_PREFIX}{commit_hash[:12]}"
+
+
+def _detect_lock_file(worktree_path: str) -> Optional[str]:
+    """Check for conda lock files in the worktree. Returns the path if found."""
+    system = platform.system().lower()  # linux, darwin
+    arch = platform.machine()           # x86_64, aarch64
+    # Try platform-specific lock file first, then generic
+    candidates = [
+        f"conda-{system}-{arch}.lock",
+        f"conda-{system}-64.lock",
+        "conda-lock.yml",
+    ]
+    for name in candidates:
+        path = os.path.join(worktree_path, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def setup_conda_env(worktree_path: str, commit_hash: str) -> str:
+    """Create a conda environment for the worktree's dependencies.
+
+    Checks for lock files first (newer setup), falls back to conda.yml.
+    Returns the conda environment name.
+    """
+    env_name = _conda_env_name(commit_hash)
+
+    # Remove existing env if present
     subprocess.run(
-        ["pip", "install", "-e", "."],
+        ["conda", "env", "remove", "--name", env_name, "--yes"],
+        capture_output=True,
+        check=False,
+    )
+
+    lock_file = _detect_lock_file(worktree_path)
+    conda_yml = os.path.join(worktree_path, "conda.yml")
+
+    if lock_file:
+        logger.info("Creating conda env '%s' from lock file: %s",
+                    env_name, lock_file)
+        subprocess.run(
+            ["conda", "create", "--name", env_name, "--file", lock_file, "--yes"],
+            check=True,
+        )
+    elif os.path.isfile(conda_yml):
+        logger.info("Creating conda env '%s' from conda.yml", env_name)
+        subprocess.run(
+            ["conda", "env", "create", "--file",
+                conda_yml, "--name", env_name, "--yes"],
+            check=True,
+        )
+    else:
+        raise FileNotFoundError(
+            f"No conda lock file or conda.yml found in worktree {worktree_path}"
+        )
+
+    return env_name
+
+
+def build_in_worktree(worktree_path: str, conda_env: str) -> None:
+    """Build OpenSfM in the worktree within the dedicated conda env."""
+    logger.info("Building OpenSfM in worktree %s (env: %s)",
+                worktree_path, conda_env)
+    subprocess.run(
+        ["conda", "run", "--name", conda_env,
+         "pip", "install", "-e", "."],
         cwd=worktree_path,
         check=True,
     )
 
 
-def cleanup_worktree(worktree_path: str, repo_root: str) -> None:
-    """Remove the worktree and restore the main checkout's editable install."""
+def cleanup_worktree(worktree_path: str, repo_root: str, conda_env: Optional[str] = None) -> None:
+    """Remove the worktree and its conda environment."""
     logger.info("Removing worktree %s", worktree_path)
     subprocess.run(
         ["git", "worktree", "remove", worktree_path, "--force"],
         cwd=repo_root,
         check=False,
     )
-    logger.info("Restoring editable install from %s", repo_root)
-    subprocess.run(
-        ["pip", "install", "-e", "."],
-        cwd=repo_root,
-        check=True,
-    )
+
+    if conda_env:
+        logger.info("Removing conda env '%s'", conda_env)
+        subprocess.run(
+            ["conda", "env", "remove", "--name", conda_env, "--yes"],
+            capture_output=True,
+            check=False,
+        )
 
 
 def _list_images(images_dir: str) -> List[str]:

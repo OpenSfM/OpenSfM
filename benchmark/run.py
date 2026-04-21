@@ -24,6 +24,7 @@ from benchmark.pipeline import run_all_datasets
 from benchmark.workspace import (
     build_in_worktree,
     cleanup_worktree,
+    setup_conda_env,
     setup_dataset,
     setup_worktree,
     _resolve_commit,
@@ -95,8 +96,10 @@ def main() -> None:
 
     # Setup worktree and build
     worktree_path = setup_worktree(args.commit, repo_root)
+    conda_env = None
     try:
-        build_in_worktree(worktree_path)
+        conda_env = setup_conda_env(worktree_path, full_hash)
+        build_in_worktree(worktree_path, conda_env)
 
         # Setup datasets
         for dataset_name in config.datasets:
@@ -107,9 +110,10 @@ def main() -> None:
 
         # Run pipeline
         opensfm_bin = os.path.join(worktree_path, "bin", "opensfm")
-        run_meta = run_all_datasets(opensfm_bin, run_dir, config, full_hash)
+        run_meta = run_all_datasets(
+            opensfm_bin, run_dir, config, full_hash, conda_env)
     finally:
-        cleanup_worktree(worktree_path, repo_root)
+        cleanup_worktree(worktree_path, repo_root, conda_env)
 
     # Find reference and generate comparison
     ref_run_dir = find_reference_run(

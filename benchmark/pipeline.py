@@ -27,6 +27,7 @@ PIPELINE_STEPS: List[str] = [
 def run_pipeline(
     opensfm_bin: str,
     dataset_path: str,
+    conda_env: str,
 ) -> Dict[str, Any]:
     """Run the SfM pipeline on a single dataset.
 
@@ -43,7 +44,8 @@ def run_pipeline(
         t0 = time.monotonic()
         try:
             proc = subprocess.run(
-                [opensfm_bin, step, dataset_path],
+                ["conda", "run", "--name", conda_env,
+                 opensfm_bin, step, dataset_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -81,6 +83,7 @@ def run_all_datasets(
     run_dir: str,
     config: BenchmarkConfig,
     commit_hash: str,
+    conda_env: str,
 ) -> Dict[str, Any]:
     """Run the pipeline on all datasets and write run_meta.json.
 
@@ -102,7 +105,7 @@ def run_all_datasets(
     for dataset_name in config.datasets:
         dataset_path = os.path.join(run_dir, dataset_name)
         logger.info("Running pipeline on %s", dataset_name)
-        pipeline_result = run_pipeline(opensfm_bin, dataset_path)
+        pipeline_result = run_pipeline(opensfm_bin, dataset_path, conda_env)
         run_meta["datasets"][dataset_name] = pipeline_result
 
     run_meta["total_wall_time"] = round(time.monotonic() - total_t0, 2)
