@@ -102,11 +102,14 @@ def main() -> None:
         build_in_worktree(worktree_path, conda_env)
 
         # Setup datasets
-        for dataset_name in config.datasets:
+        for dataset_name, config_name in config.datasets.items():
             source_dir = os.path.join(config.root, dataset_name)
             target_dir = os.path.join(run_dir, dataset_name)
-            setup_dataset(source_dir, target_dir)
-            logger.info("Dataset prepared: %s", dataset_name)
+            config_file = os.path.join(
+                config.configs_dir, f"{config_name}.yaml")
+            setup_dataset(source_dir, target_dir, config_file)
+            logger.info("Dataset prepared: %s (config: %s)",
+                        dataset_name, config_name)
 
         # Run pipeline
         opensfm_bin = os.path.join(worktree_path, "bin", "opensfm")

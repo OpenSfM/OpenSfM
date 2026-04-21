@@ -17,7 +17,6 @@ IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "pgm", "pnm", "gif"}
 COPYABLE_FILES = [
     "gcp_list.txt",
     "ground_control_points.json",
-    "config.yaml",
     "camera_models_overrides.json",
 ]
 
@@ -173,11 +172,12 @@ def _list_images(images_dir: str) -> List[str]:
     return files
 
 
-def setup_dataset(source_dir: str, target_dir: str) -> None:
+def setup_dataset(source_dir: str, target_dir: str, config_file: Optional[str] = None) -> None:
     """Create a lightweight benchmark dataset directory.
 
     Generates image_list.txt pointing to the source images via absolute paths,
-    and copies ancillary files (gcp, config, etc.) from the source.
+    copies ancillary files (gcp, etc.) from the source, and installs the
+    benchmark config file with the machine's CPU count as 'processes'.
     """
     os.makedirs(target_dir, exist_ok=True)
 
@@ -191,6 +191,16 @@ def setup_dataset(source_dir: str, target_dir: str) -> None:
     with open(image_list_path, "w") as f:
         for img_path in image_paths:
             f.write(img_path + "\n")
+
+    # Copy the benchmark config and append processes count
+    if config_file and os.path.isfile(config_file):
+        target_config = os.path.join(target_dir, "config.yaml")
+        shutil.copy2(config_file, target_config)
+        ncpus = os.cpu_count() or 1
+        with open(target_config, "a") as f:
+            f.write(f"\nprocesses: {ncpus}\n")
+        logger.info("Config %s installed with processes=%d",
+                    config_file, ncpus)
 
     # Copy ancillary files
     for filename in COPYABLE_FILES:

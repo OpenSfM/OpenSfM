@@ -1,8 +1,8 @@
 {
     "root": "./data",
-    "datasets": [
-        "berlin",
-        "lund"
-    ],
+    "datasets": {
+        "berlin": "terrestrial",
+        "lund": "terrestrial"
+    },
     "output_dir": "./benchmark_runs"
 }
