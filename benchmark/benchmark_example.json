@@ -1,0 +1,8 @@
+{
+    "root": "./data",
+    "datasets": [
+        "berlin",
+        "lund"
+    ],
+    "output_dir": "./benchmark_runs"
+}

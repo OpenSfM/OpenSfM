@@ -18,6 +18,7 @@ uv.lock
 .cache
 .pytest_cache
 eval
+/benchmark_runs
 
 # Viewer
 node_modules
