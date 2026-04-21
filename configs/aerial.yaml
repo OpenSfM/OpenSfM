@@ -1,0 +1,83 @@
+
+processes: 24
+
+##################################
+# Params for features
+##################################
+# If fewer frames are detected, sift_peak_threshold/surf_hessian_threshold is reduced.
+feature_min_frames: 20000
+# Resize the image if its size is larger than specified. Set to -1 for original size
+feature_process_size: 4096
+
+
+##################################
+# Params for matching
+##################################
+matching_gps_distance: 0
+# Number of images to match selected by time taken. Set to 0 to disable
+matching_time_neighbors: 6
+# Number of images to match selected by image name. Set to 0 to disable
+matching_order_neighbors: 6
+
+# Number of images to match selected by VLAD distance. Set to 0 to disable
+matching_vlad_neighbors: 8
+# Maximum GPS distance for preempting images before using selection by VLAD distance. Set to 0 to disable
+matching_vlad_gps_distance: 50
+# Number of images (selected by GPS distance) to preempt before using selection by VLAD distance. Set to 0 to use no limit (or disable if matching_vlad_gps_distance is also 0)
+matching_vlad_gps_neighbors: 20
+# If True, VLAD image selection will use N neighbors from the same camera + N neighbors from any different camera. If False, the selection will take the nearest neighbors from all cameras.
+matching_vlad_other_cameras: false
+# Number of rounds to run when running triangulation-based pair selection
+matching_graph_rounds: 20
+
+
+##################################
+# Params for track creation
+##################################
+# Minimum number of features/images per track
+min_track_length: 2
+
+##################################
+# Params for bundle adjustment
+##################################
+# Type of threshold for filtering outlier : either fixed value (FIXED) or based on actual distribution (AUTO)
+bundle_outlier_filtering_type: "FIXED"
+# For AUTO filtering type, projections with larger reprojection than ratio-times-mean, are removed
+bundle_outlier_auto_ratio: 3.0
+# For FIXED filtering type, projections with larger reprojection error after bundle adjustment are removed
+bundle_outlier_fixed_threshold: 0.006
+# Optimize internal camera parameters during bundle
+optimize_camera_parameters: true
+# Maximum optimizer iterations.
+bundle_max_iterations: 100
+
+# Retriangulate all points from time to time
+retriangulation: true
+# Retriangulate when the number of points grows by this ratio
+retriangulation_ratio: 1.2
+# Use analytic derivatives or auto-differentiated ones during bundle adjustment
+bundle_analytic_derivatives: true
+# Bundle when the number of points grows by this ratio
+bundle_new_points_ratio: 1.2
+# Minimum number of common points betwenn images to be considered neighbors
+local_bundle_min_common_points: 20
+# Max number of shots to optimize during local bundle adjustment
+local_bundle_max_shots: 10
+# Remove uncertain and isolated points from the final point cloud
+filter_final_point_cloud: True
+
+##################################
+# Params for GPS alignment
+##################################
+# Use or ignore EXIF altitude tag
+use_altitude_tag: true
+# orientation_prior or naive
+align_method: "auto"
+# orientation_prior or naive
+orientation_prior: "vertical"
+# Enforce GPS position in bundle adjustment
+bundle_use_gps: true
+# Enforce Ground Control Point position in bundle adjustment
+bundle_use_gcp: true
+# Compensate GPS with a per-camera similarity transform
+bundle_compensate_gps_bias: true
