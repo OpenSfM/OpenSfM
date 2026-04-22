@@ -179,7 +179,17 @@ def setup_dataset(source_dir: str, target_dir: str, config_file: Optional[str] =
     copies ancillary files (gcp, etc.) from the source, and installs the
     benchmark config file with the machine's CPU count as 'processes'.
     """
-    os.makedirs(target_dir, exist_ok=True)
+    # Use permissive umask so files are readable/writable across processes
+    # (needed for NAS mounts where conda run may have different effective user)
+    old_umask = os.umask(0o000)
+    try:
+        _setup_dataset_inner(source_dir, target_dir, config_file)
+    finally:
+        os.umask(old_umask)
+
+
+def _setup_dataset_inner(source_dir: str, target_dir: str, config_file: Optional[str] = None) -> None:
+    os.makedirs(target_dir, exist_ok=True, mode=0o777)
 
     # Generate image_list.txt with absolute paths to source images
     images_dir = os.path.join(source_dir, "images")

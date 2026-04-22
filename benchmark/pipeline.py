@@ -45,7 +45,7 @@ def run_pipeline(
         try:
             proc = subprocess.run(
                 ["conda", "run", "--name", conda_env,
-                 opensfm_bin, step, dataset_path],
+                 "bash", "-c", f"umask 0000 && {opensfm_bin} {step} {dataset_path}"],
                 capture_output=True,
                 text=True,
                 check=True,

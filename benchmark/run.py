@@ -87,11 +87,13 @@ def main() -> None:
     short_hash = full_hash[:8]
     logger.info("Benchmarking commit %s (%s)", short_hash, full_hash)
 
-    # Create run directory
+    # Create run directory (permissive permissions for NAS compatibility)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_name = f"{short_hash}_{timestamp}"
     run_dir = os.path.join(config.output_dir, run_name)
-    os.makedirs(run_dir, exist_ok=True)
+    old_umask = os.umask(0o000)
+    os.makedirs(run_dir, exist_ok=True, mode=0o777)
+    os.umask(old_umask)
     logger.info("Run directory: %s", run_dir)
 
     # Setup worktree and build
