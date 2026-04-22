@@ -56,6 +56,7 @@ def _extract_exif(image: str, data: DataSetBase) -> Dict[str, Any]:
             fp,
             partial(data.image_size, image),
             data.config["use_exif_size"],
+            data.config["default_projection_type"],
             name=image,
         )
 
@@ -63,9 +64,6 @@ def _extract_exif(image: str, data: DataSetBase) -> Dict[str, Any]:
         not d["model"] or d["model"] == "unknown"
     ):
         d["model"] = f"unknown_{image}"
-
-    if data.config.get("default_projection_type"):
-        d["projection_type"] = data.config.get("default_projection_type")
 
     d["camera"] = exif.camera_id(d)
 

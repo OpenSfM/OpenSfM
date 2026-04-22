@@ -17,6 +17,9 @@ class OpenSfMConfig:
     use_exif_size: bool = True
     # Treat images from unknown camera models as coming from different cameras
     unknown_camera_models_are_different: bool = False
+    # Default projection type to use when it cannot be inferred from EXIF metadata
+    default_projection_type: str = "perspective"
+    # Default focal length to sensor size ratio to use when it cannot be inferred from EXIF metadata
     default_focal_prior: float = 0.85
 
     ##################################

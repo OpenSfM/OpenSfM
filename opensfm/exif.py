@@ -20,7 +20,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 inch_in_mm: float = 25.4
 cm_in_mm: float = 10
 um_in_mm: float = 0.001
-default_projection: str = "perspective"
 maximum_altitude: float = 1e4
 
 
@@ -156,9 +155,16 @@ def extract_exif_from_file(
     fileobj: BinaryIO,
     image_size_loader: Callable[[], Tuple[int, int]],
     use_exif_size: bool,
+    default_projection_type: str,
     name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    exif_data = EXIF(fileobj, image_size_loader, use_exif_size, name=name)
+    exif_data = EXIF(
+        fileobj,
+        image_size_loader,
+        default_projection_type,
+        use_exif_size,
+        name=name,
+    )
     d = exif_data.extract_exif()
     return d
 
@@ -211,12 +217,14 @@ class EXIF:
         self,
         fileobj: BinaryIO,
         image_size_loader: Callable[[], Tuple[int, int]],
+        default_projection_type: str,
         use_exif_size: bool = True,
         name: Optional[str] = None,
     ) -> None:
         self.image_size_loader: Callable[[],
                                          Tuple[int, int]] = image_size_loader
         self.use_exif_size: bool = use_exif_size
+        self.default_projection_type: str = default_projection_type
         self.fileobj: BinaryIO = fileobj
         self.tags: Dict[str, Any] = exifread.process_file(
             fileobj, details=False)
@@ -279,7 +287,7 @@ class EXIF:
 
     def extract_projection_type(self) -> str:
         gpano = get_gpano_from_xmp(self.xmp)
-        return gpano.get("GPano:ProjectionType", "perspective")
+        return gpano.get("GPano:ProjectionType", self.default_projection_type)
 
     def extract_focal(self) -> Tuple[float, float]:
         make, model = self.extract_make(), self.extract_model()
