@@ -1488,8 +1488,6 @@ def grow_reconstruction(
             )
 
         candidates = resection_candidates.get_candidates(images)
-        if not candidates:
-            break
 
         logger.info("-------------------------------------------------------")
         threshold = data.config["resection_threshold"]
@@ -1504,6 +1502,8 @@ def grow_reconstruction(
             logger.info("Ratio of resected tracks in {}: {:.2f}".format(
                 image, ratio_existing))
             if ratio_existing > ratio_redundant:
+                logger.info(
+                    f"Skipping {image} due to high redundancy ({ratio_existing:.2f})")
                 redundant_shots.add(image)
                 images.remove(image)
                 continue
