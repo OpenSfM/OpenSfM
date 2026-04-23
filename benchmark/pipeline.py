@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from benchmark.config import BenchmarkConfig
 
@@ -46,6 +46,30 @@ STEP_OUTPUTS: Dict[str, List[str]] = {
     "compute_statistics": ["stats"],
     "export_report": [],
 }
+
+
+def _set_oom_score_adj(score: int) -> None:
+    """Write an OOM score adjustment to /proc/self/oom_score_adj.
+
+    Called as preexec_fn in pipeline subprocesses so the kernel preferentially
+    kills them under memory pressure rather than the benchmark orchestrator.
+    """
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write(str(score))
+    except OSError:
+        pass
+
+
+def _make_oom_preexec(score: int = 500) -> Callable[[], None]:
+    def _preexec() -> None:
+        _set_oom_score_adj(score)
+    return _preexec
+
+
+def protect_self_from_oom(score: int = -500) -> None:
+    """Lower the current process's OOM score so it survives memory pressure."""
+    _set_oom_score_adj(score)
 
 
 def bootstrap_dataset(source_dataset_dir: str, target_dataset_dir: str, from_step: str) -> None:
@@ -139,15 +163,18 @@ def run_pipeline(
 
         # Steps before from_step: skip unconditionally
         if from_step and step_idx < from_idx:
-            logger.info("  [%s] %s SKIPPED (before --from-step)", ds_name, step)
-            result["steps"][step] = {"skipped": True, "reason": "before_from_step"}
+            logger.info(
+                "  [%s] %s SKIPPED (before --from-step)", ds_name, step)
+            result["steps"][step] = {
+                "skipped": True, "reason": "before_from_step"}
             continue
 
         # Steps at/after from_step (or all steps when no from_step):
         # if resume and no from_step, also skip already-complete steps
         if resume and from_step is None and is_step_complete(step, dataset_path):
             logger.info("  [%s] %s SKIPPED (already complete)", ds_name, step)
-            result["steps"][step] = {"skipped": True, "reason": "already_complete"}
+            result["steps"][step] = {
+                "skipped": True, "reason": "already_complete"}
             continue
 
         logger.info("  [%s] %s ...", ds_name, step)
@@ -162,6 +189,7 @@ def run_pipeline(
                 capture_output=True,
                 text=True,
                 check=True,
+                preexec_fn=_make_oom_preexec(500),
             )
             elapsed = time.monotonic() - t0
             result["steps"][step] = {
@@ -250,4 +278,3 @@ def run_all_datasets(
     logger.info("Run metadata written to %s/run_meta.json", run_dir)
 
     return run_meta
-

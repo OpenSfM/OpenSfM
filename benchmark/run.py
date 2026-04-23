@@ -34,7 +34,7 @@ from benchmark.compare import (
     load_run_stats,
 )
 from benchmark.config import load_config
-from benchmark.pipeline import PIPELINE_STEPS, run_all_datasets, save_run_meta
+from benchmark.pipeline import PIPELINE_STEPS, run_all_datasets, save_run_meta, protect_self_from_oom
 from benchmark.workspace import (
     build_in_worktree,
     cleanup_worktree,
@@ -136,6 +136,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Protect this orchestrator process from the OOM killer — pipeline
+    # subprocesses are given a high OOM score instead, so the kernel
+    # kills them first under memory pressure rather than us.
+    protect_self_from_oom(-500)
+
     if args.bootstrap and not (args.commit and args.from_step):
         parser.error("--bootstrap requires --commit and --from-step")
     if args.from_step and args.resume and args.bootstrap:
@@ -218,12 +223,15 @@ def main() -> None:
         for dataset_name, config_name in config.datasets.items():
             target_dir = os.path.join(run_dir, dataset_name)
             if is_resume and os.path.isfile(os.path.join(target_dir, "image_list.txt")):
-                logger.info("Dataset already prepared, skipping setup: %s", dataset_name)
+                logger.info(
+                    "Dataset already prepared, skipping setup: %s", dataset_name)
                 continue
             source_dir = os.path.join(config.root, dataset_name)
-            config_file = os.path.join(config.configs_dir, f"{config_name}.yaml")
+            config_file = os.path.join(
+                config.configs_dir, f"{config_name}.yaml")
             setup_dataset(source_dir, target_dir, config_file)
-            logger.info("Dataset prepared: %s (config: %s)", dataset_name, config_name)
+            logger.info("Dataset prepared: %s (config: %s)",
+                        dataset_name, config_name)
 
         # Write initial run_meta.json before pipeline starts (crash-safe)
         if not is_resume:
@@ -249,11 +257,14 @@ def main() -> None:
             if args.bootstrap:
                 bootstrap_run_dir = os.path.abspath(args.bootstrap)
                 if not os.path.isdir(bootstrap_run_dir):
-                    raise ValueError(f"Bootstrap directory does not exist: {bootstrap_run_dir}")
+                    raise ValueError(
+                        f"Bootstrap directory does not exist: {bootstrap_run_dir}")
             else:
-                bootstrap_run_dir = _find_bootstrap_run(config.output_dir, full_hash)
+                bootstrap_run_dir = _find_bootstrap_run(
+                    config.output_dir, full_hash)
                 if bootstrap_run_dir:
-                    logger.info("Auto-detected bootstrap source: %s", bootstrap_run_dir)
+                    logger.info("Auto-detected bootstrap source: %s",
+                                bootstrap_run_dir)
                 else:
                     logger.warning(
                         "No complete previous run found for commit %s to bootstrap from. "
@@ -278,7 +289,8 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # HTML comparison report
     # -----------------------------------------------------------------------
-    ref_run_dir = find_reference_run(config.output_dir, run_dir, args.reference)
+    ref_run_dir = find_reference_run(
+        config.output_dir, run_dir, args.reference)
     current_stats = load_run_stats(run_dir)
     reference_stats = load_run_stats(ref_run_dir) if ref_run_dir else None
     reference_meta = load_run_meta(ref_run_dir) if ref_run_dir else None
@@ -286,7 +298,8 @@ def main() -> None:
     if ref_run_dir:
         logger.info("Comparing against reference: %s", ref_run_dir)
     else:
-        logger.info("No reference run found — report will show current results only.")
+        logger.info(
+            "No reference run found — report will show current results only.")
 
     output_path = generate_comparison_html(
         current_stats, reference_stats, run_meta, reference_meta, run_dir
@@ -310,4 +323,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
