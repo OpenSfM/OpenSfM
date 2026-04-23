@@ -3,7 +3,6 @@
 import datetime
 import logging
 from codecs import decode, encode
-import math
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, Union
 
 import exifread
@@ -61,43 +60,14 @@ def get_tag_as_float(tags: Dict[str, Any], key: str, index: int = 0) -> Optional
         return None
 
 
-def focal35_to_focal_ratio(
-    focal35_or_ratio: float, width: int, height: int, inverse=False
-) -> float:
-    """
-    Convert focal length in 35mm film equivalent to focal ratio (and vice versa).
-    We follow https://en.wikipedia.org/wiki/35_mm_equivalent_focal_length
-    """
-    image_ratio = float(max(width, height)) / min(width, height)
-    is_32 = math.fabs(image_ratio - 3.0 / 2.0)
-    is_43 = math.fabs(image_ratio - 4.0 / 3.0)
-    if is_32 < is_43:
-        # 3:2 aspect ratio : use 36mm for 35mm film
-        film_width = 36.0
-        if inverse:
-            return focal35_or_ratio * film_width
-        else:
-            return focal35_or_ratio / film_width
-    else:
-        # 4:3 aspect ratio : use 34mm for 35mm film
-        film_width = 34
-        if inverse:
-            return focal35_or_ratio * film_width
-        else:
-            return focal35_or_ratio / film_width
-
-
 def compute_focal(
-    pixel_width: int,
-    pixel_height: int,
     focal_35: Optional[float],
     focal: Optional[float],
     sensor_width: Optional[float],
     sensor_string: Optional[str],
 ) -> Tuple[float, float]:
     if focal_35 is not None and focal_35 > 0:
-        focal_ratio = focal35_to_focal_ratio(
-            focal_35, pixel_width, pixel_height)
+        focal_ratio = focal_35 / 36.0
     else:
         if not sensor_width:
             sensor_width = (
@@ -105,9 +75,7 @@ def compute_focal(
             )
         if sensor_width and focal:
             focal_ratio = focal / sensor_width
-            focal_35 = focal35_to_focal_ratio(
-                focal, pixel_width, pixel_height, inverse=True
-            )
+            focal_35 = 36.0 * focal_ratio
         else:
             focal_35 = 0.0
             focal_ratio = 0.0
@@ -291,10 +259,7 @@ class EXIF:
 
     def extract_focal(self) -> Tuple[float, float]:
         make, model = self.extract_make(), self.extract_model()
-        width, height = self.extract_image_size()
         focal_35, focal_ratio = compute_focal(
-            width,
-            height,
             get_tag_as_float(self.tags, "EXIF FocalLengthIn35mmFilm"),
             get_tag_as_float(self.tags, "EXIF FocalLength"),
             self.extract_sensor_width(),
@@ -735,13 +700,7 @@ class EXIF:
 
 def hard_coded_calibration(exif: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     focal = exif["focal_ratio"]
-    fmm35 = int(
-        round(
-            focal35_to_focal_ratio(
-                focal, int(exif["width"]), int(exif["height"]), inverse=True
-            )
-        )
-    )
+    fmm35 = int(round(focal * 36.0))
     make = exif["make"].strip().lower()
     model = exif["model"].strip().lower()
     raw_calibrations = camera_calibration()[0]
@@ -819,10 +778,10 @@ def default_calibration(data: DataSetBase) -> Dict[str, Any]:
 
 
 def calibration_from_metadata(
-    metadata: Dict[str, Any], data: DataSetBase
+    metadata: Dict[str, Any], data: DataSetBase, default_projection_type: str,
 ) -> Dict[str, Any]:
     """Finds the best calibration in one of the calibration sources."""
-    pt = metadata.get("projection_type", default_projection).lower()
+    pt = metadata.get("projection_type", default_projection_type).lower()
     if (
         pt == "brown"
         or pt == "fisheye_opencv"
@@ -851,7 +810,7 @@ def camera_from_exif_metadata(
     metadata: Dict[str, Any],
     data: DataSetBase,
     calibration_func: Callable[
-        [Dict[str, Any], DataSetBase], Dict[str, Any]
+        [Dict[str, Any], DataSetBase, str], Dict[str, Any],
     ] = calibration_from_metadata,
 ) -> pygeometry.Camera:
     """
@@ -859,8 +818,9 @@ def camera_from_exif_metadata(
     function that turns metadata into usable calibration parameters.
     """
 
-    calib = calibration_func(metadata, data)
-    calib_pt = calib.get("projection_type", default_projection).lower()
+    calib = calibration_func(
+        metadata, data, data.config["default_projection_type"])
+    calib_pt = calib["projection_type"].lower()
 
     camera = None
     if calib_pt == "perspective":
