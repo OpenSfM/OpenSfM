@@ -299,7 +299,8 @@ py::tuple BAHelpers::BundleLocal(
 
   if (config["bundle_use_gcp"].cast<bool>() && !gcp.empty()) {
     const auto t_gcp_start = std::chrono::high_resolution_clock::now();
-    AddGCPToBundle(ba, map, gcp, config);
+    AddGCPToBundle(ba, map, gcp, config, added_landmarks,
+                   interior.size() + boundary.size());
     t_projections +=
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - t_gcp_start)
@@ -357,7 +358,8 @@ py::tuple BAHelpers::BundleLocal(
   report["brief_report"] = ba.BriefReport();
   report["full_report"] = ba.FullReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
-  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
+  report["termination_type"] =
+      ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["neighborhood"] =
       std::chrono::duration_cast<std::chrono::microseconds>(
@@ -438,12 +440,20 @@ bool BAHelpers::TriangulateGCP(
 // Add Ground Control Points constraints to the bundle problem
 size_t BAHelpers::AddGCPToBundle(
     bundle::BundleAdjuster& ba, const map::Map& map,
-    const AlignedVector<map::GroundControlPoint>& gcp, const py::dict& config) {
+    const AlignedVector<map::GroundControlPoint>& gcp, const py::dict& config,
+    size_t num_ba_points, size_t num_ba_shots) {
   const auto& reference = map.GetTopocentricConverter();
   const auto& shots = map.GetShots();
 
   const float reproj_threshold =
       config["gcp_reprojection_error_threshold"].cast<float>();
+  const double gcp_global_weight = config["gcp_global_weight"].cast<double>();
+  const double gcp_observation_sd = config["gcp_observation_sd"].cast<double>();
+
+  const double tracks_per_shots =
+      static_cast<double>(num_ba_points) /
+      std::max(static_cast<size_t>(1), num_ba_shots);
+  const double weight_factor = std::sqrt(std::max(1.0, tracks_per_shots));
 
   size_t added_gcp_observations = 0;
   for (const auto& point : gcp) {
@@ -457,13 +467,9 @@ size_t BAHelpers::AddGCPToBundle(
       }
     }
 
-    double avg_observations = 0.;
     int valid_shots = 0;
     for (const auto& obs : point.observations_) {
-      const auto shot_it = shots.find(obs.shot_id_);
-      if (shot_it != shots.end()) {
-        const auto& shot = (shot_it->second);
-        avg_observations += shot.GetLandmarkObservations().size();
+      if (shots.count(obs.shot_id_) > 0) {
         ++valid_shots;
       }
     }
@@ -471,12 +477,8 @@ size_t BAHelpers::AddGCPToBundle(
     if (!valid_shots) {
       continue;
     }
-    avg_observations /= valid_shots;
-    const double weight_factor = std::sqrt(std::max(1.0, avg_observations));
 
-    const double prior_balance = std::max(1.0, (double)valid_shots);
-    const double prior_weight = config["gcp_global_weight"].cast<double>() *
-                                weight_factor * prior_balance;
+    const double prior_weight = gcp_global_weight * weight_factor;
     constexpr auto point_constant{false};
     ba.AddPoint(point_id, coordinates, point_constant);
     if (!point.lla_.empty()) {
@@ -487,15 +489,12 @@ size_t BAHelpers::AddGCPToBundle(
                        point_std / prior_weight, point.has_altitude_);
     }
 
-    // Now iterate through the observations
-    const double obs_weight = config["gcp_global_weight"].cast<double>() *
-                              weight_factor * prior_balance;
+    const double obs_weight = gcp_global_weight * weight_factor;
     for (const auto& obs : point.observations_) {
       const auto& shot_id = obs.shot_id_;
       if (shots.count(shot_id) > 0) {
-        constexpr double scale{0.001};
         ba.AddPointProjectionObservation(shot_id, point_id, obs.projection_,
-                                         scale / obs_weight);
+                                         gcp_observation_sd / obs_weight);
         ++added_gcp_observations;
       }
     }
@@ -742,7 +741,8 @@ py::dict BAHelpers::BundleShotPoses(
   report["brief_report"] = ba.BriefReport();
   report["full_report"] = ba.FullReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
-  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
+  report["termination_type"] =
+      ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["setup"] =
       std::chrono::duration_cast<std::chrono::microseconds>(timer_setup - start)
@@ -963,7 +963,8 @@ py::dict BAHelpers::Bundle(
 
   if (config["bundle_use_gcp"].cast<bool>() && !gcp.empty()) {
     const auto t_gcp_start = std::chrono::high_resolution_clock::now();
-    AddGCPToBundle(ba, map, gcp, config);
+    AddGCPToBundle(ba, map, gcp, config, landmark_lookup.size(),
+                   map.GetShots().size());
     t_projections +=
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - t_gcp_start)
@@ -1023,7 +1024,8 @@ py::dict BAHelpers::Bundle(
   report["brief_report"] = ba.BriefReport();
   report["full_report"] = ba.FullReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
-  report["termination_type"] = ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
+  report["termination_type"] =
+      ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
   report["wall_times"] = py::dict();
   report["wall_times"]["setup"] =
       std::chrono::duration_cast<std::chrono::microseconds>(timer_setup - start)

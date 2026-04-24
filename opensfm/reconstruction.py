@@ -89,6 +89,38 @@ def bundle(
     return report
 
 
+def bundle_with_gcp_annealing(
+    reconstruction: types.Reconstruction,
+    camera_priors: Dict[str, pygeometry.Camera],
+    rig_camera_priors: Dict[str, pymap.RigCamera],
+    gcp: List[pymap.GroundControlPoint],
+    grid_size: int,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Bundle adjust with graduated GCP weight annealing.
+
+    Runs multiple bundle passes with increasing GCP weight multipliers
+    to smoothly steer the reconstruction toward GCP constraints.
+    """
+    annealing_steps = config.get("gcp_annealing_steps", [1.0])
+    base_weight = config["gcp_global_weight"]
+    report = {}
+    for i, multiplier in enumerate(annealing_steps):
+        step_config = config.copy()
+        step_config["gcp_global_weight"] = base_weight * multiplier
+        logger.info(
+            "GCP annealing step %d/%d: weight_multiplier=%.2f, "
+            "effective_gcp_global_weight=%.4f",
+            i + 1, len(annealing_steps), multiplier,
+            step_config["gcp_global_weight"],
+        )
+        report = bundle(
+            reconstruction, camera_priors, rig_camera_priors,
+            gcp, grid_size, step_config,
+        )
+    return report
+
+
 def bundle_shot_poses(
     reconstruction: types.Reconstruction,
     shot_ids: Set[str],
@@ -1615,8 +1647,8 @@ def grow_reconstruction(
         overidden_config["bundle_compensate_gps_bias"] = False
         config = overidden_config
 
-    bundle(reconstruction, camera_priors, rig_camera_priors,
-           gcp, final_bundle_grid, config)
+    bundle_with_gcp_annealing(reconstruction, camera_priors, rig_camera_priors,
+                              gcp, final_bundle_grid, config)
     resection_candidates.remove(*remove_outliers(reconstruction, config))
 
     if config["filter_final_point_cloud"]:
@@ -1633,7 +1665,7 @@ def grow_reconstruction(
     report["memory_delta"] = final_memory - initial_memory
     logger.info(
         f"[Memory] Total memory change during grow_reconstruction: "
-        f"{(final_memory - initial_memory) / 1024 / 1024:.1f} GB"
+        f"{(final_memory - initial_memory) / 1024 / 1024 / 1024:.1f} GB"
     )
     return reconstruction, report
 
@@ -1702,8 +1734,8 @@ def triangulation_reconstruction(
         overidden_bias_config["bundle_compensate_gps_bias"] = False
         config = overidden_bias_config
 
-    bundle(reconstruction, camera_priors,
-           rig_camera_priors, gcp, bundle_grid, config)
+    bundle_with_gcp_annealing(reconstruction, camera_priors,
+                              rig_camera_priors, gcp, bundle_grid, config)
     remove_outliers(reconstruction, config_override)
 
     if config["filter_final_point_cloud"]:

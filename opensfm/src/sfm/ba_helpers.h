@@ -61,8 +61,8 @@ class BAHelpers {
 
   static size_t AddGCPToBundle(
       bundle::BundleAdjuster& ba, const map::Map& map,
-      const AlignedVector<map::GroundControlPoint>& gcp,
-      const py::dict& config);
+      const AlignedVector<map::GroundControlPoint>& gcp, const py::dict& config,
+      size_t num_ba_points, size_t num_ba_shots);
 
   static TracksSelection SelectTracksGrid(
       map::Map& map, const std::unordered_set<map::ShotId>& shot_ids,

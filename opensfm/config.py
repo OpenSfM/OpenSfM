@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, IO, Union
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, IO, List, Union
 
 import yaml
 
@@ -271,8 +271,15 @@ class OpenSfMConfig:
     gcp_horizontal_sd: float = 0.01
     # The default vertical standard deviation of the GCPs (in meters)
     gcp_vertical_sd: float = 0.1
-    # Global weight for GCPs, expressed a ratio of the sum of (# projections) + (# shots) + (# relative motions)
+    # Global weight for GCPs relative to regular observations (scaled by sqrt of avg tracks/shot)
     gcp_global_weight: float = 0.04
+    # The standard deviation of GCP reprojection observations (in normalized image coordinates)
+    gcp_observation_sd: float = 0.001
+    # Annealing schedule for GCP weights: list of multipliers applied to gcp_global_weight
+    # across successive bundle passes. Set to [1.0] to disable annealing (single pass).
+    gcp_annealing_steps: List[float] = field(
+        default_factory=lambda: [1.0, 10.0, 100.0]
+    )
     # The standard deviation of the rig translation
     rig_translation_sd: float = 0.1
     # The standard deviation of the rig rotation
