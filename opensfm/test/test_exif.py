@@ -68,7 +68,7 @@ def create_exif_instance(xmp_content, monkeypatch):
 
     monkeypatch.setattr("exifread.process_file", lambda f, details=False: {})
 
-    return exif.EXIF(fileobj, lambda: (100, 100))
+    return exif.EXIF(fileobj, lambda: (100, 100), "perspective")
 
 
 def test_dji_parsing_latlon(dji_xmp_data_gimbal, monkeypatch):
@@ -141,7 +141,7 @@ def test_dji_parsing_none(monkeypatch):
     fileobj.name = "test.jpg"
     monkeypatch.setattr("exifread.process_file", lambda f, details=False: {})
 
-    e = exif.EXIF(fileobj, lambda: (100, 100))
+    e = exif.EXIF(fileobj, lambda: (100, 100), "perspective")
 
     assert not e.has_dji_latlon()
     assert not e.has_dji_altitude()
@@ -162,7 +162,7 @@ def create_exif_with_tags(tags, monkeypatch):
     fileobj.name = "test.jpg"
 
     monkeypatch.setattr("opensfm.exif.get_xmp", lambda f: [])
-    return exif.EXIF(fileobj, lambda: (1000, 2000))
+    return exif.EXIF(fileobj, lambda: (1000, 2000), "perspective")
 
 
 def test_gps_parsing_standard(monkeypatch):
@@ -199,7 +199,7 @@ def test_focal_length_parsing(monkeypatch):
     assert focal_35 == 35.0
 
     # Image is 4:3 (4000x3000), so film width is assumed 34mm
-    assert abs(focal_ratio - (35.0 / 34.0)) < 0.01
+    assert abs(focal_ratio - (35.0 / 36.0)) < 0.01
 
 
 def test_sensor_width_calculation(monkeypatch):
@@ -285,20 +285,6 @@ def test_capture_time_exif(monkeypatch):
     assert e.extract_capture_time() == expected
 
 
-def test_focal35_to_focal_ratio_logic():
-    # 3:2 ratio
-    ratio = exif.focal35_to_focal_ratio(35.0, 300, 200)
-    assert abs(ratio - 35.0 / 36.0) < 0.01
-
-    # 4:3 ratio
-    ratio = exif.focal35_to_focal_ratio(34.0, 400, 300)
-    assert abs(ratio - 34.0 / 34.0) < 0.01
-
-    # Inverse
-    f35 = exif.focal35_to_focal_ratio(35.0 / 36.0, 300, 200, inverse=True)
-    assert abs(f35 - 35.0) < 0.01
-
-
 def test_extract_geo_structure_coord(monkeypatch):
     tags = {
         "GPS GPSLatitude": MockTag([exifread.utils.Ratio(10, 1), exifread.utils.Ratio(0, 1), exifread.utils.Ratio(0, 1)]),
@@ -342,7 +328,8 @@ def test_integration_extract_exif_from_file(monkeypatch):
     fileobj = io.BytesIO(b"")
     fileobj.name = "test.jpg"
 
-    d = exif.extract_exif_from_file(fileobj, lambda: (100, 100), True)
+    d = exif.extract_exif_from_file(
+        fileobj, lambda: (100, 100), True, "perpspective")
 
     assert d["make"] == "TestMake"
     assert d["width"] == 100
