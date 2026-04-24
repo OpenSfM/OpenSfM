@@ -87,3 +87,6 @@ bundle_use_gps: true
 bundle_use_gcp: true
 # Compensate GPS with a per-camera similarity transform
 bundle_compensate_gps_bias: true
+# Annealing schedule for GCP weights: list of multipliers applied to gcp_global_weight
+# across successive bundle passes. Set to [1.0] to disable annealing (single pass).
+gcp_annealing_steps: [1.0, 10.0]

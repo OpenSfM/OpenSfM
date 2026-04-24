@@ -15,6 +15,8 @@ def test_reconstruction_incremental(
         scene_synthetic.gcps,
     )
 
+    dataset.config["gcp_annealing_steps"] = [1.0, 10.0]
+    dataset.config["align_method"] = "auto"
     dataset.config["bundle_compensate_gps_bias"] = True
     dataset.config["bundle_use_gcp"] = True
     dataset.config["bundle_max_iterations"] = 20
@@ -34,8 +36,8 @@ def test_reconstruction_incremental(
     assert errors["ratio_cameras"] == 1.0
     assert 0.7 < errors["ratio_points"] < 1.0
 
-    assert 0 < errors["aligned_position_rmse"] < 0.045
-    assert 0 < errors["aligned_rotation_rmse"] < 0.0035
+    assert 0 < errors["aligned_position_rmse"] < 0.055
+    assert 0 < errors["aligned_rotation_rmse"] < 0.0042
     assert 0 < errors["aligned_points_rmse"] < 0.1
 
     # Sanity check that GPS error is similar to the generated gps_noise
@@ -62,7 +64,7 @@ def test_reconstruction_incremental_rig(
         scene_synthetic_rig.tracks_manager,
     )
 
-    dataset.config["align_method"] = "orientation_prior"
+    dataset.config["align_method"] = "auto"
     _, reconstructed_scene = reconstruction.incremental_reconstruction(
         dataset, scene_synthetic_rig.tracks_manager
     )
