@@ -2,6 +2,12 @@
 processes: 24
 
 ##################################
+# Params for metadata
+##################################
+# Default projection type to use when it cannot be inferred from EXIF metadata
+default_projection_type: "brown"
+
+##################################
 # Params for features
 ##################################
 # If fewer frames are detected, sift_peak_threshold/surf_hessian_threshold is reduced.
