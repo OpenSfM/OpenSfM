@@ -80,7 +80,7 @@ use_altitude_tag: true
 # orientation_prior or naive
 align_method: "auto"
 # orientation_prior or naive
-orientation_prior: "horizontal"
+align_orientation_prior: "horizontal"
 # Enforce GPS position in bundle adjustment
 bundle_use_gps: true
 # Enforce Ground Control Point position in bundle adjustment
