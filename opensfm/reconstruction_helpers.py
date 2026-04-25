@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import exif as oexif, geometry, multiview, pygeometry, pymap, rig, types
+from opensfm import exif as oexif, geo, geometry, multiview, pygeometry, pymap, rig, types
 from opensfm.dataset_base import DataSetBase
 
 
@@ -156,10 +156,9 @@ def reconstruction_from_metadata(
                 average_translation += rig_instance.pose.get_origin()
                 rotations.append(rig_instance.pose.rotation)
 
-
         if len(rotations) > 0:
             rig_instance.pose.rotation = geometry.average_rotation(rotations)
-            rig_instance.pose.set_origin(average_translation / len(rotations))            
+            rig_instance.pose.set_origin(average_translation / len(rotations))
 
     return reconstruction
 
@@ -179,9 +178,16 @@ def exif_to_metadata(
             alt = 2.0  # Arbitrary value used to align the reconstruction
         x, y, z = reference.to_topocentric(lat, lon, alt)
         metadata.gps_position.value = np.array([x, y, z])
-        metadata.gps_accuracy.value = gps.get("dop", 15.0)
-        if metadata.gps_accuracy.value == 0.0:
-            metadata.gps_accuracy.value = 15.0
+        if "latitude_std" in gps and "longitude_std" in gps and "altitude_std" in gps:
+            gps_std = np.array(
+                [gps["longitude_std"], gps["latitude_std"], gps["altitude_std"]]
+            )
+        elif "dop" in gps and gps["dop"] > 0:
+            gps_std = np.full(3, gps["dop"])
+        else:
+            gps_std = geo.DEFAULT_GPS_STD.copy()
+        gps_std = np.maximum(gps_std, 1e-3)
+        metadata.gps_accuracy.value = gps_std
 
     opk = exif.get("opk")
     if opk and "omega" in opk and "phi" in opk and "kappa" in opk:

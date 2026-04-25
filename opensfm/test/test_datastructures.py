@@ -78,7 +78,8 @@ def _create_reconstruction(
                 if len(choice) > 1:
                     for ch in choice:
                         # create a new observation
-                        obs = pymap.Observation(100, 200, 0.5, 255, 0, 0, int(pt.id))
+                        obs = pymap.Observation(
+                            100, 200, 0.5, 255, 0, 0, int(pt.id))
                         shot = rec.shots[str(ch)]
                         rec.add_observation(shot, pt, obs)
         # TODO: If required, we have to do the same for pano shots
@@ -167,7 +168,8 @@ def test_brown_camera() -> None:
     p2 = 0.002
     k3 = 0.01
     cam_cpp = pygeometry.Camera.create_brown(
-        focal_x, focal_y / focal_x, np.array([c_x, c_y]), np.array([k1, k2, k3, p1, p2])
+        focal_x, focal_y /
+        focal_x, np.array([c_x, c_y]), np.array([k1, k2, k3, p1, p2])
     )
     cam_cpp.width = 800
     cam_cpp.height = 600
@@ -210,7 +212,8 @@ def test_fisheye_opencv_camera() -> None:
     aspect_ratio = 0.7
     ppoint = np.array([0.51, 0.52])
     dist = np.array([-0.1, 0.09, 0.08, 0.01])
-    cam_cpp = pygeometry.Camera.create_fisheye_opencv(focal, aspect_ratio, ppoint, dist)
+    cam_cpp = pygeometry.Camera.create_fisheye_opencv(
+        focal, aspect_ratio, ppoint, dist)
     cam_cpp.width = 800
     cam_cpp.height = 600
     cam_cpp.id = "cam"
@@ -231,8 +234,10 @@ def test_fisheye62_camera() -> None:
     focal = 0.6
     aspect_ratio = 0.7
     ppoint = np.array([0.51, 0.52])
-    dist = np.array([-0.1, 0.09, 0.08, 0.01, 0.02, 0.05, 0.1, 0.2])  # [k1-k6, p1, p2]
-    cam_cpp = pygeometry.Camera.create_fisheye62(focal, aspect_ratio, ppoint, dist)
+    dist = np.array([-0.1, 0.09, 0.08, 0.01, 0.02,
+                    0.05, 0.1, 0.2])  # [k1-k6, p1, p2]
+    cam_cpp = pygeometry.Camera.create_fisheye62(
+        focal, aspect_ratio, ppoint, dist)
     cam_cpp.width = 800
     cam_cpp.height = 600
     cam_cpp.id = "cam"
@@ -258,7 +263,8 @@ def test_fisheye624_camera() -> None:
     dist = np.array(
         [-0.1, 0.09, 0.08, 0.01, 0.02, 0.05, 0.1, 0.2, 0.01, -0.003, 0.005, -0.007]
     )  # [k1-k6, p1, p2, s0-s3]
-    cam_cpp = pygeometry.Camera.create_fisheye624(focal, aspect_ratio, ppoint, dist)
+    cam_cpp = pygeometry.Camera.create_fisheye624(
+        focal, aspect_ratio, ppoint, dist)
     cam_cpp.width = 800
     cam_cpp.height = 600
     cam_cpp.id = "cam"
@@ -351,7 +357,7 @@ def test_shot_measurement_setter_and_getter() -> None:
     # Test basic functionality
     _help_measurement_test(m1, "capture_time", np.random.rand(1).item())
     _help_measurement_test(m1, "gps_position", np.random.rand(3))
-    _help_measurement_test(m1, "gps_accuracy", np.random.rand(1).item())
+    _help_measurement_test(m1, "gps_accuracy", np.random.rand(3))
     _help_measurement_test(m1, "compass_accuracy", np.random.rand(1).item())
     _help_measurement_test(m1, "compass_angle", np.random.rand(1).item())
     _help_measurement_test(m1, "opk_accuracy", np.random.rand(1).item())
@@ -364,7 +370,7 @@ def test_shot_measurement_setter_and_getter() -> None:
 def _helper_populate_metadata(m: pymap.ShotMeasurements) -> None:
     m.capture_time.value = np.random.rand(1).item()
     m.gps_position.value = np.random.rand(3)
-    m.gps_accuracy.value = np.random.rand(1).item()
+    m.gps_accuracy.value = np.random.rand(3)
     m.compass_accuracy.value = np.random.rand(1).item()
     m.compass_angle.value = np.random.rand(1).item()
     m.opk_accuracy.value = np.random.rand(1).item()
@@ -880,7 +886,8 @@ def test_point_reproj_errors_assign() -> None:
     pt = rec.points["0"]
 
     # When assigning reprojections errors
-    reproj_errors = dict({"shot1": np.random.rand(2), "shot2": np.random.rand(2)})
+    reproj_errors = dict(
+        {"shot1": np.random.rand(2), "shot2": np.random.rand(2)})
     pt.reprojection_errors = reproj_errors
 
     # They should be correct
@@ -1015,7 +1022,8 @@ def test_clean_landmarks_with_min_observations() -> None:
     for shot_id in range(n_shots):
         cam_id = "cam" + str(int(np.random.rand(1).item() * 10 % n_cams))
         m.create_rig_instance(str(shot_id))
-        m.create_shot(str(shot_id), cam_id, cam_id, str(shot_id), pygeometry.Pose())
+        m.create_shot(str(shot_id), cam_id, cam_id,
+                      str(shot_id), pygeometry.Pose())
 
     for point_id in range(n_landmarks):
         m.create_landmark(str(point_id), np.random.rand(3))

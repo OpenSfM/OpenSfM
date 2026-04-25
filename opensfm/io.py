@@ -536,7 +536,7 @@ def pymap_metadata_to_json(metadata: pymap.ShotMeasurements) -> Dict[str, Any]:
     if metadata.capture_time.has_value:
         obj["capture_time"] = metadata.capture_time.value
     if metadata.gps_accuracy.has_value:
-        obj["gps_dop"] = metadata.gps_accuracy.value
+        obj["gps_accuracy"] = list(metadata.gps_accuracy.value)
     if metadata.gps_position.has_value:
         obj["gps_position"] = list(metadata.gps_position.value)
     if metadata.gravity_down.has_value:
@@ -566,8 +566,12 @@ def json_to_pymap_metadata(obj: Dict[str, Any]) -> pymap.ShotMeasurements:
         metadata.orientation.value = obj.get("orientation")
     if obj.get("capture_time") is not None:
         metadata.capture_time.value = obj.get("capture_time")
-    if obj.get("gps_dop") is not None:
-        metadata.gps_accuracy.value = obj.get("gps_dop")
+    if obj.get("gps_accuracy") is not None:
+        metadata.gps_accuracy.value = np.array(
+            obj["gps_accuracy"], dtype=float)
+    elif obj.get("gps_dop") is not None:
+        dop = float(obj["gps_dop"])
+        metadata.gps_accuracy.value = np.array([dop, dop, dop])
     if obj.get("gps_position") is not None:
         metadata.gps_position.value = obj.get("gps_position")
     if obj.get("skey") is not None:

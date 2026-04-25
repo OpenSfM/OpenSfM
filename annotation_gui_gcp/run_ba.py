@@ -699,7 +699,7 @@ def align(
 
     # Scale the GPS DOP with the number of shots to ensure GCPs are used to align
     for shot in merged.shots.values():
-        shot.metadata.gps_accuracy.value = 0.5 * len(merged.shots)
+        shot.metadata.gps_accuracy.value = np.full(3, 0.5 * len(merged.shots))
 
     gcp_alignment = {"after_rigid": gcp_geopositional_error(gcps, merged)}
     logger.info(

@@ -606,7 +606,7 @@ def test_bundle_void_gps_ignored() -> None:
 
     # Missing position
     shot.metadata.gps_position.value = np.zeros(3)
-    shot.metadata.gps_accuracy.value = 1
+    shot.metadata.gps_accuracy.value = np.ones(3)
     shot.metadata.gps_position.reset()
     shot.pose.set_origin(np.ones(3))
     reconstruction.bundle(r, camera_priors, rig_priors, gcp, 0, myconfig)
@@ -614,7 +614,7 @@ def test_bundle_void_gps_ignored() -> None:
 
     # Missing accuracy
     shot.metadata.gps_position.value = np.zeros(3)
-    shot.metadata.gps_accuracy.value = 1
+    shot.metadata.gps_accuracy.value = np.ones(3)
     shot.metadata.gps_accuracy.reset()
     shot.pose.set_origin(np.ones(3))
     reconstruction.bundle(r, camera_priors, rig_priors, gcp, 0, myconfig)
@@ -622,7 +622,7 @@ def test_bundle_void_gps_ignored() -> None:
 
     # Valid gps position and accuracy
     shot.metadata.gps_position.value = np.zeros(3)
-    shot.metadata.gps_accuracy.value = 1
+    shot.metadata.gps_accuracy.value = np.ones(3)
     shot.pose.set_origin(np.ones(3))
     reconstruction.bundle(r, camera_priors, rig_priors, gcp, 0, myconfig)
     assert np.allclose(shot.pose.get_origin(), np.zeros(3))
@@ -639,7 +639,7 @@ def test_bundle_alignment_prior() -> None:
         "1", camera.id, pygeometry.Pose(np.random.rand(3), np.random.rand(3))
     )
     shot.metadata.gps_position.value = np.array([0, 0, 0])
-    shot.metadata.gps_accuracy.value = 1
+    shot.metadata.gps_accuracy.value = np.ones(3)
 
     camera_priors = {camera.id: camera}
     rig_priors = dict(r.rig_cameras.items())

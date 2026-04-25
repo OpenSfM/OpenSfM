@@ -236,7 +236,7 @@ class EXIF:
 
     def extract_make(self) -> str:
         # Camera make and model
-        if "EXIF LensMake" in self.tags:
+        if "EXIF LensMake" in self.tags and self.tags["EXIF LensMake"].values:
             make = self.tags["EXIF LensMake"].values
         elif "Image Make" in self.tags:
             make = self.tags["Image Make"].values
@@ -245,7 +245,7 @@ class EXIF:
         return self._decode_make_model(make)
 
     def extract_model(self) -> str:
-        if "EXIF LensModel" in self.tags:
+        if "EXIF LensModel" in self.tags and self.tags["EXIF LensModel"].values:
             model = self.tags["EXIF LensModel"].values
         elif "Image Model" in self.tags:
             model = self.tags["Image Model"].values
@@ -427,11 +427,58 @@ class EXIF:
             return eval_frac(self.tags["GPS GPSDOP"].values[0])
         return None
 
+    def has_dji_rtk_std(self) -> bool:
+        return (
+            self.has_xmp()
+            and "@drone-dji:RtkStdLat" in self.xmp[0]
+            and "@drone-dji:RtkStdLon" in self.xmp[0]
+            and "@drone-dji:RtkStdHgt" in self.xmp[0]
+        )
+
+    def extract_dji_rtk_std(self) -> Optional[Dict[str, float]]:
+        """Extract DJI RTK standard deviation tags (in meters)."""
+        if not self.has_dji_rtk_std():
+            return None
+        try:
+            return {
+                "latitude_std": float(self.xmp[0]["@drone-dji:RtkStdLat"]),
+                "longitude_std": float(self.xmp[0]["@drone-dji:RtkStdLon"]),
+                "altitude_std": float(self.xmp[0]["@drone-dji:RtkStdHgt"]),
+            }
+        except (ValueError, TypeError):
+            return None
+
+    def has_ebee_rtk_std(self) -> bool:
+        return (
+            self.has_xmp()
+            and "@Camera:GPSXYAccuracy" in self.xmp[0]
+            and "@Camera:GPSZAccuracy" in self.xmp[0]
+        )
+
+    def extract_ebee_rtk_std(self) -> Optional[Dict[str, float]]:
+        """Extract Ebee GPS accuracy tags (in meters). XY is used for both lat and lon."""
+        if not self.has_ebee_rtk_std():
+            return None
+        try:
+            xy = float(self.xmp[0]["@Camera:GPSXYAccuracy"])
+            z = float(self.xmp[0]["@Camera:GPSZAccuracy"])
+            return {
+                "latitude_std": xy,
+                "longitude_std": xy,
+                "altitude_std": z,
+            }
+        except (ValueError, TypeError):
+            return None
+
+    def extract_rtk_std(self) -> Optional[Dict[str, float]]:
+        """Extract per-axis GPS std dev from DJI RTK or Ebee tags."""
+        return self.extract_dji_rtk_std() or self.extract_ebee_rtk_std()
+
     def extract_geo(self) -> Dict[str, Any]:
         altitude = self.extract_altitude()
         dop = self.extract_dop()
         lon, lat = self.extract_lon_lat()
-        d = {}
+        d: Dict[str, Any] = {}
 
         if lon is not None and lat is not None:
             d["latitude"] = lat
@@ -440,6 +487,9 @@ class EXIF:
             d["altitude"] = min([maximum_altitude, altitude])
         if dop is not None:
             d["dop"] = dop
+        rtk_std = self.extract_rtk_std()
+        if rtk_std is not None:
+            d.update(rtk_std)
         return d
 
     def extract_capture_time(self) -> float:

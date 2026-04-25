@@ -66,7 +66,8 @@ def add_cluster_neighbors(
 
         neighbors = []
         for i in cluster_indices:
-            neighbors.extend(topo_tree.query_ball_point(topocentrics[i], max_distance))
+            neighbors.extend(topo_tree.query_ball_point(
+                topocentrics[i], max_distance))
 
         cluster = list(np.union1d(cluster_indices, neighbors))
         clusters.append(cluster)
@@ -94,7 +95,8 @@ def scale_matrix(covariance: NDArray) -> NDArray:
         L = np.linalg.cholesky(covariance)
     except Exception:
         logger.error(
-            "Could not compute Cholesky of covariance matrix {}".format(covariance)
+            "Could not compute Cholesky of covariance matrix {}".format(
+                covariance)
         )
 
         d = np.diag(np.diag(covariance).clip(1e-8, None))
@@ -133,10 +135,11 @@ def add_camera_constraints_soft(
             t = shot.pose.translation
 
             if shot_id not in added_shots:
-                ra.add_shot(shot_name, R[0], R[1], R[2], t[0], t[1], t[2], False)
+                ra.add_shot(shot_name, R[0], R[1],
+                            R[2], t[0], t[1], t[2], False)
 
                 gps = shot.metadata.gps_position.value
-                gps_sd = shot.metadata.gps_accuracy.value
+                gps_sd = float(np.mean(shot.metadata.gps_accuracy.value))
 
                 ra.add_absolute_position_constraint(
                     shot_name, gps[0], gps[1], gps[2], gps_sd
@@ -176,7 +179,7 @@ def add_camera_constraints_hard(
             ra.add_shot(shot_name, R[0], R[1], R[2], t[0], t[1], t[2], True)
 
             gps = shot.metadata.gps_position.value
-            gps_sd = shot.metadata.gps_accuracy.value
+            gps_sd = float(np.mean(shot.metadata.gps_accuracy.value))
             ra.add_relative_absolute_position_constraint(
                 rec_name, shot_name, gps[0], gps[1], gps[2], gps_sd
             )
@@ -281,9 +284,11 @@ def align_reconstructions(
     ra = pybundle.ReconstructionAlignment()
 
     if camera_constraint_type == "soft_camera_constraint":
-        add_camera_constraints_soft(ra, reconstruction_shots, reconstruction_name)
+        add_camera_constraints_soft(
+            ra, reconstruction_shots, reconstruction_name)
     if camera_constraint_type == "hard_camera_constraint":
-        add_camera_constraints_hard(ra, reconstruction_shots, reconstruction_name, True)
+        add_camera_constraints_hard(
+            ra, reconstruction_shots, reconstruction_name, True)
     if use_points_constraints:
         add_point_constraints(ra, reconstruction_shots, reconstruction_name)
 

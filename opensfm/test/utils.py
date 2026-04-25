@@ -29,7 +29,7 @@ def assert_metadata_equal(
 
     assert m1.gps_accuracy.has_value == m2.gps_accuracy.has_value
     if m1.gps_accuracy.has_value:
-        assert m1.gps_accuracy.value == m2.gps_accuracy.value
+        assert np.allclose(m1.gps_accuracy.value, m2.gps_accuracy.value)
 
     assert m1.orientation.has_value == m2.orientation.has_value
     if m1.orientation.has_value:

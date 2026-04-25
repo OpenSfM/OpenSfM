@@ -28,7 +28,7 @@ struct ShotMeasurements {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   foundation::OptionalValue<double> capture_time_;
   foundation::OptionalValue<Vec3d> gps_position_;
-  foundation::OptionalValue<double> gps_accuracy_;
+  foundation::OptionalValue<Vec3d> gps_accuracy_;
   foundation::OptionalValue<double> compass_accuracy_;
   foundation::OptionalValue<double> compass_angle_;
   foundation::OptionalValue<Vec3d> gravity_down_;

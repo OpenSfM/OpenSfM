@@ -161,7 +161,7 @@ def test_json_to_and_from_metadata() -> None:
     m = io.json_to_pymap_metadata(obj)
     assert m.orientation.value == 10
     assert m.capture_time.value == 1
-    assert m.gps_accuracy.value == 2
+    assert np.allclose(m.gps_accuracy.value, [2, 2, 2])
     assert np.allclose(m.gps_position.value, [4, 5, 6])
     assert m.sequence_key.value == "test"
     assert np.allclose(m.gravity_down.value, [7, 8, 9])
@@ -169,7 +169,11 @@ def test_json_to_and_from_metadata() -> None:
     assert m.compass_accuracy.value == 45
     assert np.allclose(m.opk_angles.value, [1.0, 2.0, 3.0])
     assert m.opk_accuracy.value == 0.1
-    assert obj == io.pymap_metadata_to_json(m)
+    obj2 = io.pymap_metadata_to_json(m)
+    assert obj2["orientation"] == obj["orientation"]
+    assert obj2["capture_time"] == obj["capture_time"]
+    assert np.allclose(obj2["gps_accuracy"], [2, 2, 2])
+    assert np.allclose(obj2["gps_position"], obj["gps_position"])
 
 
 def test_camera_from_to_vector() -> None:

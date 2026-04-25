@@ -209,7 +209,7 @@ py::tuple BAHelpers::BundleLocal(
     // we're going to assign GPS constraint to the instance itself
     // by averaging its shot's GPS values (and std dev.)
     Vec3d average_position = Vec3d::Zero();
-    double average_std = 0.;
+    Vec3d average_std = Vec3d::Zero();
     int gps_count = 0;
 
     // if any instance's shot is in boundary
@@ -245,8 +245,7 @@ py::tuple BAHelpers::BundleLocal(
       average_position /= gps_count;
       average_std /= gps_count;
       ba.AddRigInstancePositionPrior(rig_instance_id, average_position,
-                                     Vec3d::Constant(average_std),
-                                     gps_scale_group);
+                                     average_std, gps_scale_group);
     }
   }
 
@@ -645,7 +644,7 @@ py::dict BAHelpers::BundleShotPoses(
     // we're going to assign GPS constraint to the instance itself
     // by averaging its shot's GPS values (and std dev.)
     Vec3d average_position = Vec3d::Zero();
-    double average_std = 0.;
+    Vec3d average_std = Vec3d::Zero();
     int gps_count = 0;
 
     // if any instance's shot is in boundary
@@ -681,8 +680,7 @@ py::dict BAHelpers::BundleShotPoses(
         average_position /= gps_count;
         average_std /= gps_count;
         ba.AddRigInstancePositionPrior(rig_instance_id, average_position,
-                                       Vec3d::Constant(average_std),
-                                       gps_scale_group);
+                                       average_std, gps_scale_group);
       }
     }
   }
@@ -882,7 +880,7 @@ py::dict BAHelpers::Bundle(
     auto& instance = instance_pair.second;
 
     Vec3d average_position = Vec3d::Zero();
-    double average_std = 0.;
+    Vec3d average_std = Vec3d::Zero();
     int gps_count = 0;
 
     // average GPS and assign GPS constraint to the instance
@@ -897,11 +895,11 @@ py::dict BAHelpers::Bundle(
         const auto pos = shot.GetShotMeasurements().gps_position_;
         const auto acc = shot.GetShotMeasurements().gps_accuracy_;
         if (pos.HasValue() && acc.HasValue()) {
-          if (acc.Value() <= 0) {
+          if ((acc.Value().array() <= 0).any()) {
             throw std::runtime_error(
                 "Shot " + shot.GetId() +
-                " has an accuracy <= 0: " + std::to_string(acc.Value()) +
-                ". Try modifying "
+                " has an accuracy component <= 0."
+                " Try modifying "
                 "your input parser to filter such values.");
           }
           average_position += pos.Value();
@@ -918,8 +916,7 @@ py::dict BAHelpers::Bundle(
       average_position /= gps_count;
       average_std /= gps_count;
       ba.AddRigInstancePositionPrior(instance_pair.first, average_position,
-                                     Vec3d::Constant(average_std),
-                                     gps_scale_group);
+                                     average_std, gps_scale_group);
     }
   }
 
