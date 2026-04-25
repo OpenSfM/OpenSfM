@@ -258,6 +258,14 @@ class EXIF:
         return gpano.get("GPano:ProjectionType", self.default_projection_type)
 
     def extract_focal(self) -> Tuple[float, float]:
+        # DJI CalibratedFocalLength is focal length in pixels — use it if available
+        calibrated_focal_px = self.extract_dji_calibrated_focal_length()
+        if calibrated_focal_px is not None and calibrated_focal_px > 0:
+            width, _ = self.extract_image_size()
+            focal_ratio = calibrated_focal_px / width
+            focal_35 = 36.0 * focal_ratio
+            return focal_35, focal_ratio
+
         make, model = self.extract_make(), self.extract_model()
         focal_35, focal_ratio = compute_focal(
             get_tag_as_float(self.tags, "EXIF FocalLengthIn35mmFilm"),
@@ -365,6 +373,15 @@ class EXIF:
 
     def extract_dji_relative_altitude(self) -> float:
         return float(self.xmp[0]["@drone-dji:RelativeAltitude"])
+
+    def extract_dji_calibrated_focal_length(self) -> Optional[float]:
+        """Extract DJI CalibratedFocalLength (focal length in pixels) from XMP."""
+        if self.has_xmp() and "@drone-dji:CalibratedFocalLength" in self.xmp[0]:
+            try:
+                return float(self.xmp[0]["@drone-dji:CalibratedFocalLength"])
+            except (ValueError, TypeError):
+                return None
+        return None
 
     def extract_relative_altitude(self) -> Optional[float]:
         if self.has_dji_relative_altitude():
