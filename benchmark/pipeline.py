@@ -72,6 +72,26 @@ def protect_self_from_oom(score: int = -500) -> None:
     _set_oom_score_adj(score)
 
 
+def _refresh_disk_cache(dataset_path: str) -> None:
+    """
+    Force NFS attribute-cache refresh on key dataset files.
+    """
+    for name in ("image_list.txt", "config.yaml"):
+        p = os.path.join(dataset_path, name)
+        try:
+            os.stat(p)
+            # Touch-read a few bytes to force the NFS client to revalidate
+            with open(p, "rb") as f:
+                f.read(1)
+        except OSError:
+            pass
+    # Also stat the directory itself
+    try:
+        os.listdir(dataset_path)
+    except OSError:
+        pass
+
+
 def bootstrap_dataset(source_dataset_dir: str, target_dataset_dir: str, from_step: str) -> None:
     """Populate target_dataset_dir with outputs of all steps before from_step.
 
@@ -127,6 +147,7 @@ def save_run_meta(run_meta: Dict[str, Any], run_dir: str) -> None:
     try:
         with open(meta_path, "w") as f:
             json.dump(run_meta, f, indent=2)
+        os.chmod(meta_path, 0o666)
     finally:
         os.umask(old_umask)
 
@@ -179,6 +200,10 @@ def run_pipeline(
 
         logger.info("  [%s] %s ...", ds_name, step)
         t0 = time.monotonic()
+
+        # Force disk attribute-cache refresh
+        _refresh_disk_cache(dataset_path)
+
         try:
             subprocess.run(
                 [

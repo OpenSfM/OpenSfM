@@ -222,10 +222,6 @@ def main() -> None:
         # Dataset setup: idempotent — skips datasets that already have image_list.txt
         for dataset_name, config_name in config.datasets.items():
             target_dir = os.path.join(run_dir, dataset_name)
-            if is_resume and os.path.isfile(os.path.join(target_dir, "image_list.txt")):
-                logger.info(
-                    "Dataset already prepared, skipping setup: %s", dataset_name)
-                continue
             source_dir = os.path.join(config.root, dataset_name)
             config_file = os.path.join(
                 config.configs_dir, f"{config_name}.yaml")

@@ -190,6 +190,7 @@ def setup_dataset(source_dir: str, target_dir: str, config_file: Optional[str] =
 
 def _setup_dataset_inner(source_dir: str, target_dir: str, config_file: Optional[str] = None) -> None:
     os.makedirs(target_dir, exist_ok=True, mode=0o777)
+    os.chmod(target_dir, 0o777)
 
     # Generate image_list.txt with absolute paths to source images
     images_dir = os.path.join(source_dir, "images")
@@ -201,6 +202,7 @@ def _setup_dataset_inner(source_dir: str, target_dir: str, config_file: Optional
     with open(image_list_path, "w") as f:
         for img_path in image_paths:
             f.write(img_path + "\n")
+    os.chmod(image_list_path, 0o666)
 
     # Copy the benchmark config and append processes count
     if config_file and os.path.isfile(config_file):
@@ -209,14 +211,17 @@ def _setup_dataset_inner(source_dir: str, target_dir: str, config_file: Optional
         ncpus = os.cpu_count() or 1
         with open(target_config, "a") as f:
             f.write(f"\nprocesses: {ncpus}\n")
+        os.chmod(target_config, 0o666)
         logger.info("Config %s installed with processes=%d",
                     config_file, ncpus)
 
     # Copy ancillary files
     for filename in COPYABLE_FILES:
         src = os.path.join(source_dir, filename)
+        dst = os.path.join(target_dir, filename)
         if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(target_dir, filename))
+            shutil.copy2(src, dst)
+            os.chmod(dst, 0o666)
 
     # Copy ancillary directories
     for dirname in COPYABLE_DIRS:

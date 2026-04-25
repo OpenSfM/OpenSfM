@@ -4,10 +4,35 @@
 import json
 import logging
 import os
+import time
 from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def _open_read(path: str, retries: int = 3, delay: float = 1.0) -> str:
+    """Read a file with retries, working around NFS attribute-cache staleness.
+
+    On NFSv3 mounts with the default attribute cache, a file just written may
+    briefly appear inaccessible (Permission denied / stale handle).  We force
+    a stat() to refresh the cached attributes, then retry on transient errors.
+    """
+    for attempt in range(retries):
+        try:
+            os.stat(path)            # force NFS attribute refresh
+            with open(path, "r") as f:
+                return f.read()
+        except (PermissionError, OSError) as exc:
+            if attempt < retries - 1:
+                logger.warning(
+                    "Retrying read of %s (attempt %d/%d): %s",
+                    path, attempt + 1, retries, exc,
+                )
+                time.sleep(delay)
+            else:
+                raise
+    return ""  # unreachable, keeps pyre happy
 
 
 def load_run_stats(run_dir: str) -> Dict[str, Any]:
@@ -17,14 +42,12 @@ def load_run_stats(run_dir: str) -> Dict[str, Any]:
     if not os.path.isfile(meta_path):
         return stats
 
-    with open(meta_path, "r") as f:
-        meta = json.load(f)
+    meta = json.loads(_open_read(meta_path))
 
     for dataset_name in meta.get("config", {}).get("datasets", []):
         stats_path = os.path.join(run_dir, dataset_name, "stats", "stats.json")
         if os.path.isfile(stats_path):
-            with open(stats_path, "r") as f:
-                stats[dataset_name] = json.load(f)
+            stats[dataset_name] = json.loads(_open_read(stats_path))
         else:
             stats[dataset_name] = None
     return stats
@@ -35,8 +58,7 @@ def load_run_meta(run_dir: str) -> Optional[Dict[str, Any]]:
     meta_path = os.path.join(run_dir, "run_meta.json")
     if not os.path.isfile(meta_path):
         return None
-    with open(meta_path, "r") as f:
-        return json.load(f)
+    return json.loads(_open_read(meta_path))
 
 
 def find_reference_run(
