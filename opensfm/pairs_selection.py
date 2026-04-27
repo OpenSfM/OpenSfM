@@ -628,51 +628,31 @@ def match_candidates_by_order(
     return pairs
 
 
-def match_candidates_from_metadata(
+def _run_matching_strategies(
     images_ref: List[str],
     images_cand: List[str],
     exifs: Dict[str, Any],
     data: DataSetBase,
-    config_override: Dict[str, Any],
-) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
-    """Compute candidate matching pairs between between images_ref and images_cand
+    reference: geo.TopocentricConverter,
+    max_distance: float,
+    gps_neighbors: int,
+    graph_rounds: int,
+    time_neighbors: int,
+    order_neighbors: int,
+    bow_neighbors: int,
+    bow_gps_distance: float,
+    bow_gps_neighbors: int,
+    bow_other_cameras: bool,
+    vlad_neighbors: int,
+    vlad_gps_distance: float,
+    vlad_gps_neighbors: int,
+    vlad_other_cameras: bool,
+    use_opk: bool,
+) -> Tuple[Set[Tuple[str, str]], Dict[str, int]]:
+    """Run all matching strategies on the given ref/cand image sets.
 
-    Returns a list of pairs (im1, im2) such that (im1 in images_ref) is true.
-    Returned pairs are unique given that (i, j) == (j, i).
+    Returns the set of pairs and a report dict with counts per strategy.
     """
-
-    overriden_config = data.config.copy()
-    overriden_config.update(config_override)
-
-    max_distance = overriden_config["matching_gps_distance"]
-    gps_neighbors = overriden_config["matching_gps_neighbors"]
-    graph_rounds = overriden_config["matching_graph_rounds"]
-    time_neighbors = overriden_config["matching_time_neighbors"]
-    order_neighbors = overriden_config["matching_order_neighbors"]
-    bow_neighbors = overriden_config["matching_bow_neighbors"]
-    bow_gps_distance = overriden_config["matching_bow_gps_distance"]
-    bow_gps_neighbors = overriden_config["matching_bow_gps_neighbors"]
-    bow_other_cameras = overriden_config["matching_bow_other_cameras"]
-    vlad_neighbors = overriden_config["matching_vlad_neighbors"]
-    vlad_gps_distance = overriden_config["matching_vlad_gps_distance"]
-    vlad_gps_neighbors = overriden_config["matching_vlad_gps_neighbors"]
-    vlad_other_cameras = overriden_config["matching_vlad_other_cameras"]
-    use_opk = overriden_config["matching_use_opk"]
-
-    data.init_reference()
-    reference = data.load_reference()
-
-    if not all(map(has_gps_info, exifs.values())):
-        if gps_neighbors != 0:
-            logger.warning(
-                "Not all images have GPS info. " "Disabling matching_gps_neighbors."
-            )
-        gps_neighbors = 0
-        max_distance = 0
-        graph_rounds = 0
-
-    images_ref.sort()
-
     if (
         max_distance
         == gps_neighbors
@@ -684,12 +664,12 @@ def match_candidates_from_metadata(
         == 0
     ):
         # All pair selection strategies deactivated so we match all pairs
-        d = set()
-        t = set()
-        g = set()
-        o = set()
-        b = set()
-        v = set()
+        d: Set[Tuple[str, str]] = set()
+        t: Set[Tuple[str, str]] = set()
+        g: Set[Tuple[str, str]] = set()
+        o: Set[Tuple[str, str]] = set()
+        b: Dict[Tuple[str, str], float] = {}
+        v: Dict[Tuple[str, str], float] = {}
         pairs = {sorted_pair(i, j)
                  for i in images_ref for j in images_cand if i != j}
     else:
@@ -729,8 +709,6 @@ def match_candidates_from_metadata(
         )
         pairs = d | g | t | o | set(b) | set(v)
 
-    pairs = ordered_pairs(pairs, images_ref)
-
     report = {
         "num_pairs_distance": len(d),
         "num_pairs_graph": len(g),
@@ -739,6 +717,87 @@ def match_candidates_from_metadata(
         "num_pairs_bow": len(b),
         "num_pairs_vlad": len(v),
     }
+    return pairs, report
+
+
+def match_candidates_from_metadata(
+    images_ref: List[str],
+    images_cand: List[str],
+    exifs: Dict[str, Any],
+    data: DataSetBase,
+    config_override: Dict[str, Any],
+) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
+    """Compute candidate matching pairs between between images_ref and images_cand
+
+    Returns a list of pairs (im1, im2) such that (im1 in images_ref) is true.
+    Returned pairs are unique given that (i, j) == (j, i).
+    """
+
+    overriden_config = data.config.copy()
+    overriden_config.update(config_override)
+
+    max_distance = overriden_config["matching_gps_distance"]
+    gps_neighbors = overriden_config["matching_gps_neighbors"]
+    graph_rounds = overriden_config["matching_graph_rounds"]
+    time_neighbors = overriden_config["matching_time_neighbors"]
+    order_neighbors = overriden_config["matching_order_neighbors"]
+    bow_neighbors = overriden_config["matching_bow_neighbors"]
+    bow_gps_distance = overriden_config["matching_bow_gps_distance"]
+    bow_gps_neighbors = overriden_config["matching_bow_gps_neighbors"]
+    bow_other_cameras = overriden_config["matching_bow_other_cameras"]
+    vlad_neighbors = overriden_config["matching_vlad_neighbors"]
+    vlad_gps_distance = overriden_config["matching_vlad_gps_distance"]
+    vlad_gps_neighbors = overriden_config["matching_vlad_gps_neighbors"]
+    vlad_other_cameras = overriden_config["matching_vlad_other_cameras"]
+    use_opk = overriden_config["matching_use_opk"]
+
+    data.init_reference()
+    reference = data.load_reference()
+
+    images_ref.sort()
+
+    # Separate images by GPS availability
+    images_ref_gps = [im for im in images_ref if has_gps_info(exifs[im])]
+    images_ref_no_gps = [
+        im for im in images_ref if not has_gps_info(exifs[im])]
+    images_cand_gps = [im for im in images_cand if has_gps_info(exifs[im])]
+    images_cand_no_gps = [
+        im for im in images_cand if not has_gps_info(exifs[im])]
+
+    logger.info(
+        f"GPS split: {len(images_ref_gps)} ref with GPS, {len(images_ref_no_gps)} ref without GPS, "
+        f"{len(images_cand_gps)} cand with GPS, {len(images_cand_no_gps)} cand without GPS"
+    )
+
+    # Nominal case: match GPS images against GPS images
+    gps_pairs, report = _run_matching_strategies(
+        images_ref_gps, images_cand_gps, exifs, data, reference,
+        max_distance, gps_neighbors, graph_rounds,
+        time_neighbors, order_neighbors,
+        bow_neighbors, bow_gps_distance, bow_gps_neighbors, bow_other_cameras,
+        vlad_neighbors, vlad_gps_distance, vlad_gps_neighbors, vlad_other_cameras,
+        use_opk,
+    )
+
+    # No-GPS case: match no-GPS images against GPS images with GPS strategies disabled
+    no_gps_pairs: Set[Tuple[str, str]] = set()
+    if images_ref_no_gps:
+        logger.info(
+            f"Running non-GPS matching for {len(images_ref_no_gps)} images without GPS"
+        )
+        no_gps_pairs, no_gps_report = _run_matching_strategies(
+            images_ref_no_gps, images_cand_gps, exifs, data, reference,
+            0, 0, 0,  # max_distance, gps_neighbors, graph_rounds disabled
+            time_neighbors, order_neighbors,
+            bow_neighbors, 0, 0, bow_other_cameras,  # bow GPS preemption disabled
+            vlad_neighbors, 0, 0, vlad_other_cameras,  # vlad GPS preemption disabled
+            use_opk,
+        )
+        for k, v in no_gps_report.items():
+            report[k] = report.get(k, 0) + v
+
+    pairs = ordered_pairs(gps_pairs | no_gps_pairs, images_ref)
+
     return pairs, report
 
 
