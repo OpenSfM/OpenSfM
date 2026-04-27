@@ -532,6 +532,8 @@ def reconstruction_from_relative_pose(
     reconstruction.reference = data.load_reference()
     reconstruction.cameras = camera_priors
     reconstruction.rig_cameras = rig_camera_priors
+    reconstruction.map.set_observation_pool(
+        tracks_manager.get_observation_pool())
 
     new_shots = add_shot(data, reconstruction,
                          rig_assignments, im1, pygeometry.Pose())
@@ -783,8 +785,8 @@ def add_observation_to_reconstruction(
     shot_id: str,
     track_id: str,
 ) -> None:
-    observation = tracks_manager.get_observation(shot_id, track_id)
-    reconstruction.add_observation(shot_id, track_id, observation)
+    obs_idx = tracks_manager.get_observation_index(shot_id, track_id)
+    reconstruction.add_observation_by_index(shot_id, track_id, obs_idx)
 
 
 class TrackHandlerBase(ABC):
@@ -836,8 +838,9 @@ class TrackHandlerTrackManager(TrackHandlerBase):
 
     def store_inliers_observation(self, track_id: str, shot_id: str) -> None:
         """Stores triangulation inliers in the tracks manager."""
-        observation = self.tracks_manager.get_observation(shot_id, track_id)
-        self.reconstruction.add_observation(shot_id, track_id, observation)
+        obs_idx = self.tracks_manager.get_observation_index(shot_id, track_id)
+        self.reconstruction.add_observation_by_index(
+            shot_id, track_id, obs_idx)
 
 
 class TrackTriangulator:
@@ -1686,6 +1689,8 @@ def triangulation_reconstruction(
     gcp = data.load_ground_control_points()
 
     reconstruction = helpers.reconstruction_from_metadata(data, images)
+    reconstruction.map.set_observation_pool(
+        tracks_manager.get_observation_pool())
 
     config = data.config
     config_override = config.copy()
@@ -1930,6 +1935,8 @@ def reconstruct_from_prior(
         reconstruction.add_shot(shot)
     prior_images = set(rec_prior.shots)
     remaining_images = set(images) - prior_images
+    reconstruction.map.set_observation_pool(
+        tracks_manager.get_observation_pool())
 
     rec_report["num_prior_images"] = len(prior_images)
     rec_report["num_remaining_images"] = len(remaining_images)

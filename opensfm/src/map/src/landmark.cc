@@ -1,4 +1,5 @@
 #include <map/landmark.h>
+#include <map/observation_pool.h>
 #include <map/shot.h>
 
 #include <algorithm>
@@ -24,7 +25,7 @@ FeatureId Landmark::GetObservationIdInShot(Shot* shot) const {
   if (obs_it == observations_.end()) {
     throw std::runtime_error("Accessing with invalid shot ptr!");
   }
-  return observations_.at(shot)->feature_id;
+  return pool_->Get(obs_it->second).feature_id;
 }
 
 const Observation& Landmark::GetObservationInShot(Shot* shot) const {
@@ -32,14 +33,16 @@ const Observation& Landmark::GetObservationInShot(Shot* shot) const {
   if (obs_it == observations_.end()) {
     throw std::runtime_error("Accessing with invalid shot ptr!");
   }
-  return *observations_.at(shot);
+  return pool_->Get(obs_it->second);
 }
 
-void Landmark::AddObservation(Shot* shot, const Observation* observation) {
-  observations_[shot] = observation;
+void Landmark::AddObservation(Shot* shot, ObservationIndex obs_idx,
+                              ObservationPool* pool) {
+  pool_ = pool;
+  observations_[shot] = obs_idx;
 }
-const std::map<Shot*, const Observation*, KeyCompare>&
-Landmark::GetObservations() const {
+const std::map<Shot*, ObservationIndex, KeyCompare>& Landmark::GetObservations()
+    const {
   return observations_;
 }
 

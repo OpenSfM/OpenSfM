@@ -2,24 +2,29 @@
 
 #include <map/defines.h>
 #include <map/observation.h>
+#include <map/observation_pool.h>
 
 #include <fstream>
 #include <map>
+#include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 namespace map {
-
-// Index type for observation storage
-using ObservationIndex = size_t;
-constexpr ObservationIndex INVALID_OBSERVATION_INDEX =
-    static_cast<ObservationIndex>(-1);
 
 class TracksManager {
  public:
   void AddObservation(const ShotId& shot_id, const TrackId& track_id,
                       const Observation& observation);
   Observation GetObservation(const ShotId& shot, const TrackId& track) const;
+
+  // Depth prior management (stored separately from Observation for memory)
+  void SetDepthPrior(const ShotId& shot_id, const TrackId& track_id,
+                     const Depth& depth);
+  std::optional<Depth> GetDepthPrior(const ShotId& shot_id,
+                                     const TrackId& track_id) const;
+  std::optional<Depth> GetDepthPriorByIndex(ObservationIndex obs_idx) const;
 
   int NumShots() const;
   int NumTracks() const;
@@ -33,6 +38,9 @@ class TracksManager {
   // Returns a map of shot_id -> observation for a given track
   // Note: This constructs the map on each call (no longer returns a reference)
   std::unordered_map<ShotId, Observation> GetTrackObservations(
+      const TrackId& track) const;
+  // Returns a map of shot_id -> pool index for a given track (zero-copy)
+  std::unordered_map<ShotId, ObservationIndex> GetTrackObservationIndices(
       const TrackId& track) const;
 
   TracksManager ConstructSubTracksManager(
@@ -62,6 +70,13 @@ class TracksManager {
 
   bool HasShotObservations(const ShotId& shot) const;
 
+  // Observation pool access (for sharing with Map)
+  const std::shared_ptr<ObservationPool>& GetObservationPool() const {
+    return pool_;
+  }
+  ObservationIndex GetObservationIndex(const ShotId& shot_id,
+                                       const TrackId& track_id) const;
+
   static std::string TRACKS_HEADER;
   static int TRACKS_VERSION;
 
@@ -73,8 +88,8 @@ class TracksManager {
   StringId GetOrInsertShotIndex(const ShotId& id);
   StringId GetOrInsertTrackIndex(const TrackId& id);
 
-  // Single storage for all observations - each observation stored exactly once
-  std::vector<Observation> observations_;
+  // Observation storage via shared pool
+  std::shared_ptr<ObservationPool> pool_ = std::make_shared<ObservationPool>();
 
   // Interning storage
   std::vector<ShotId> shot_ids_;
@@ -87,5 +102,10 @@ class TracksManager {
   std::vector<std::unordered_map<StringId, ObservationIndex>> tracks_per_shot_;
   // shots_per_track_[track_index] -> map {shot_index -> obs_index}
   std::vector<std::unordered_map<StringId, ObservationIndex>> shots_per_track_;
+
+  // Sparse depth priors keyed by observation index.
+  // Only populated when depth data is available (e.g. from depth maps).
+  // Stored separately from Observation to keep the struct compact (48 bytes).
+  std::unordered_map<ObservationIndex, Depth> depth_priors_;
 };
 }  // namespace map

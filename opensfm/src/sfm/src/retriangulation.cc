@@ -19,7 +19,7 @@ namespace {
 struct TriangulationResult {
   map::TrackId track_id;
   Vec3d position;
-  std::vector<std::pair<map::Shot*, map::Observation>> observations;
+  std::vector<std::pair<map::Shot*, map::ObservationIndex>> observations;
 };
 }  // namespace
 
@@ -149,6 +149,10 @@ void ReconstructFromTracksManager(map::Map& map,
   // Clear existing observations and landmarks
   map.ClearObservationsAndLandmarks();
 
+  // Share TracksManager's observation pool with the Map (immutable, zero-copy)
+  map.SetObservationPool(tracks_manager.GetObservationPool());
+  const auto* pool = tracks_manager.GetObservationPool().get();
+
   auto& shots = map.GetShots();
   auto track_ids = tracks_manager.GetTrackIds();
 
@@ -159,15 +163,15 @@ void ReconstructFromTracksManager(map::Map& map,
   // Helper lambda to process a single track
   auto process_track =
       [&](const map::TrackId& track_id,
-          std::vector<std::pair<map::Shot*, map::Observation>>& track_obs,
+          std::vector<std::pair<map::Shot*, map::ObservationIndex>>& track_obs,
           std::vector<double>& thresholds, MatX3d& origins,
           MatX3d& bearings) -> std::pair<bool, Vec3d> {
-    const auto obs_dict = tracks_manager.GetTrackObservations(track_id);
+    const auto idx_dict = tracks_manager.GetTrackObservationIndices(track_id);
 
     track_obs.clear();
-    track_obs.reserve(obs_dict.size());
+    track_obs.reserve(idx_dict.size());
 
-    for (const auto& kv : obs_dict) {
+    for (const auto& kv : idx_dict) {
       const auto it = shots.find(kv.first);
       if (it != shots.end()) {
         track_obs.emplace_back(&it->second, kv.second);
@@ -190,7 +194,8 @@ void ReconstructFromTracksManager(map::Map& map,
 
     for (size_t j = 0; j < track_size; ++j) {
       origins.row(j) = track_obs[j].first->GetPose()->GetOrigin();
-      bearings.row(j) = track_obs[j].first->Bearing(track_obs[j].second.point);
+      bearings.row(j) =
+          track_obs[j].first->Bearing(pool->Get(track_obs[j].second).point);
     }
 
     auto res = geometry::TriangulateBearingsMidpoint(
@@ -219,7 +224,7 @@ void ReconstructFromTracksManager(map::Map& map,
     // Reusable buffers per thread
     std::vector<double> thresholds;
     MatX3d origins, bearings;
-    std::vector<std::pair<map::Shot*, map::Observation>> track_obs;
+    std::vector<std::pair<map::Shot*, map::ObservationIndex>> track_obs;
 
     if (num_threads == 1) {
       // Sequential fallback
@@ -229,9 +234,8 @@ void ReconstructFromTracksManager(map::Map& map,
         if (res.first) {
           auto& landmark = map.CreateLandmark(track_id, res.second);
           for (const auto& shot_n_obs : track_obs) {
-            auto* new_obs = shot_n_obs.first->CreateObservation(
-                &landmark, shot_n_obs.second);
-            landmark.AddObservation(shot_n_obs.first, new_obs);
+            map.AddObservationByIndex(shot_n_obs.first, &landmark,
+                                      shot_n_obs.second);
           }
         }
       }
@@ -246,9 +250,8 @@ void ReconstructFromTracksManager(map::Map& map,
         while (queue.Pop(res)) {
           auto& landmark = map.CreateLandmark(res.track_id, res.position);
           for (const auto& obs_pair : res.observations) {
-            auto* new_obs =
-                obs_pair.first->CreateObservation(&landmark, obs_pair.second);
-            landmark.AddObservation(obs_pair.first, new_obs);
+            map.AddObservationByIndex(obs_pair.first, &landmark,
+                                      obs_pair.second);
           }
         }
       } else {

@@ -237,13 +237,12 @@ void TracksManager::AddObservation(const ShotId& shot_id,
   auto& shot_tracks = tracks_per_shot_[shot_idx];
   auto it = shot_tracks.find(track_idx);
   if (it != shot_tracks.end()) {
-    observations_[it->second] = observation;
+    pool_->GetMutable(it->second) = observation;
     return;
   }
 
-  // Allocate new index and store observation
-  observations_.push_back(observation);
-  ObservationIndex obs_idx = observations_.size() - 1;
+  // Allocate new index and store observation in pool
+  ObservationIndex obs_idx = pool_->Add(observation);
 
   tracks_per_shot_[shot_idx].emplace(track_idx, obs_idx);
   shots_per_track_[track_idx].emplace(shot_idx, obs_idx);
@@ -257,9 +256,52 @@ bool TracksManager::HasShotObservations(const ShotId& shot) const {
   return shot_id_to_index_.count(shot) > 0;
 }
 
+void TracksManager::SetDepthPrior(const ShotId& shot_id,
+                                  const TrackId& track_id, const Depth& depth) {
+  const StringId shot_idx = shot_id_to_index_.at(shot_id);
+  const StringId track_idx = track_id_to_index_.at(track_id);
+  const auto& shot_tracks = tracks_per_shot_[shot_idx];
+  const auto it = shot_tracks.find(track_idx);
+  if (it == shot_tracks.end()) {
+    throw std::runtime_error("Observation not found for depth prior");
+  }
+  depth_priors_[it->second] = depth;
+}
+
+std::optional<Depth> TracksManager::GetDepthPrior(
+    const ShotId& shot_id, const TrackId& track_id) const {
+  const auto sit = shot_id_to_index_.find(shot_id);
+  if (sit == shot_id_to_index_.end()) return std::nullopt;
+  const auto& shot_tracks = tracks_per_shot_[sit->second];
+  const auto tit = shot_tracks.find(track_id_to_index_.at(track_id));
+  if (tit == shot_tracks.end()) return std::nullopt;
+  const auto dit = depth_priors_.find(tit->second);
+  if (dit == depth_priors_.end()) return std::nullopt;
+  return dit->second;
+}
+
+std::optional<Depth> TracksManager::GetDepthPriorByIndex(
+    ObservationIndex obs_idx) const {
+  const auto it = depth_priors_.find(obs_idx);
+  if (it == depth_priors_.end()) return std::nullopt;
+  return it->second;
+}
+
 std::vector<ShotId> TracksManager::GetShotIds() const { return shot_ids_; }
 
 std::vector<TrackId> TracksManager::GetTrackIds() const { return track_ids_; }
+
+ObservationIndex TracksManager::GetObservationIndex(
+    const ShotId& shot_id, const TrackId& track_id) const {
+  const StringId shot_idx = shot_id_to_index_.at(shot_id);
+  const StringId track_idx = track_id_to_index_.at(track_id);
+  const auto& shot_tracks = tracks_per_shot_[shot_idx];
+  const auto it = shot_tracks.find(track_idx);
+  if (it == shot_tracks.end()) {
+    throw std::runtime_error("Accessing invalid track ID");
+  }
+  return it->second;
+}
 
 Observation TracksManager::GetObservation(const ShotId& shot,
                                           const TrackId& track) const {
@@ -272,7 +314,7 @@ Observation TracksManager::GetObservation(const ShotId& shot,
   if (it == shot_tracks.end()) {
     throw std::runtime_error("Accessing invalid track ID");
   }
-  return observations_[it->second];
+  return pool_->Get(it->second);
 }
 
 std::unordered_map<TrackId, Observation> TracksManager::GetShotObservations(
@@ -288,7 +330,7 @@ std::unordered_map<TrackId, Observation> TracksManager::GetShotObservations(
   result.reserve(shot_tracks.size());
 
   for (const auto& [track_idx, obs_idx] : shot_tracks) {
-    result.emplace(track_ids_[track_idx], observations_[obs_idx]);
+    result.emplace(track_ids_[track_idx], pool_->Get(obs_idx));
   }
   return result;
 }
@@ -306,7 +348,25 @@ std::unordered_map<ShotId, Observation> TracksManager::GetTrackObservations(
   result.reserve(track_shots.size());
 
   for (const auto& [shot_idx, obs_idx] : track_shots) {
-    result.emplace(shot_ids_[shot_idx], observations_[obs_idx]);
+    result.emplace(shot_ids_[shot_idx], pool_->Get(obs_idx));
+  }
+  return result;
+}
+
+std::unordered_map<ShotId, ObservationIndex>
+TracksManager::GetTrackObservationIndices(const TrackId& track) const {
+  const auto it = track_id_to_index_.find(track);
+  if (it == track_id_to_index_.end()) {
+    throw std::runtime_error("Accessing invalid track ID");
+  }
+  const StringId track_idx = it->second;
+
+  std::unordered_map<ShotId, ObservationIndex> result;
+  const auto& track_shots = shots_per_track_[track_idx];
+  result.reserve(track_shots.size());
+
+  for (const auto& [shot_idx, obs_idx] : track_shots) {
+    result.emplace(shot_ids_[shot_idx], obs_idx);
   }
   return result;
 }
@@ -334,7 +394,12 @@ TracksManager TracksManager::ConstructSubTracksManager(
     for (const auto& [shot_idx, obs_idx] : track_shots) {
       if (allowed_shot_indices.count(shot_idx)) {
         subset.AddObservation(shot_ids_[shot_idx], track_id,
-                              observations_[obs_idx]);
+                              pool_->Get(obs_idx));
+        // Carry depth priors into the subset
+        const auto depth_it = depth_priors_.find(obs_idx);
+        if (depth_it != depth_priors_.end()) {
+          subset.SetDepthPrior(shot_ids_[shot_idx], track_id, depth_it->second);
+        }
       }
     }
   }
@@ -363,8 +428,8 @@ TracksManager::GetAllCommonObservations(const ShotId& shot1,
   for (const auto& p : tracks1) {
     const auto find = tracks2.find(p.first);
     if (find != tracks2.end()) {
-      tuples.emplace_back(track_ids_.at(p.first), observations_.at(p.second),
-                          observations_.at(find->second));
+      tuples.emplace_back(track_ids_.at(p.first), pool_->Get(p.second),
+                          pool_->Get(find->second));
     }
   }
   return tuples;
@@ -455,7 +520,7 @@ TracksManager TracksManager::MergeTracksManager(
          ++track_idx) {
       const auto element_id = union_find_elements.size();
       for (const auto& [shot_idx, obs_idx] : mgr->shots_per_track_[track_idx]) {
-        const auto& obs = mgr->observations_[obs_idx];
+        const auto& obs = mgr->pool_->Get(obs_idx);
         const ShotId& shot_id = mgr->shot_ids_[shot_idx];
 
         observations_per_feature_id[{shot_id, obs.feature_id}].emplace_back(
@@ -499,7 +564,13 @@ TracksManager TracksManager::MergeTracksManager(
       const auto& observations = mgr->shots_per_track_[track_idx];
       for (const auto& [shot_idx, obs_idx] : observations) {
         merged.AddObservation(mgr->shot_ids_[shot_idx], merged_track_id,
-                              mgr->observations_[obs_idx]);
+                              mgr->pool_->Get(obs_idx));
+        // Carry depth priors into the merged manager
+        const auto depth_it = mgr->depth_priors_.find(obs_idx);
+        if (depth_it != mgr->depth_priors_.end()) {
+          merged.SetDepthPrior(mgr->shot_ids_[shot_idx], merged_track_id,
+                               depth_it->second);
+        }
       }
     }
   }

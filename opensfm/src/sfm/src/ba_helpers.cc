@@ -3,6 +3,7 @@
 #include <geometry/triangulation.h>
 #include <map/ground_control_points.h>
 #include <map/map.h>
+#include <map/observation_pool.h>
 #include <sfm/ba_helpers.h>
 #include <sfm/retriangulation.h>
 
@@ -278,15 +279,15 @@ py::tuple BAHelpers::BundleLocal(
 
     for (const auto& obs_pair : lm.GetObservations()) {
       auto* shot = obs_pair.first;
-      auto* obs = obs_pair.second;
+      const auto& obs = map.GetObservationPool()->Get(obs_pair.second);
 
       auto s_it = shot_lookup.find(shot);
       if (s_it == shot_lookup.end()) {
         throw std::runtime_error("Shot " + shot->id_ +
                                  " not found in bundle adjuster");
       }
-      ba.AddPointProjectionObservationRaw(s_it->second, ba_point, obs->point,
-                                          obs->scale, obs->depth_prior);
+      ba.AddPointProjectionObservationRaw(s_it->second, ba_point, obs.point,
+                                          obs.scale, std::nullopt);
       ++added_reprojections;
     }
   }
@@ -535,7 +536,7 @@ BAHelpers::TracksSelection BAHelpers::SelectTracksGrid(
     // For each observation in the shot
     for (const auto& lm_obs : shot.GetLandmarkObservations()) {
       auto* lm = lm_obs.first;
-      const auto& obs = lm_obs.second;
+      const auto& obs = shot.GetObservationPool()->Get(lm_obs.second);
       set_other_tracks.insert(lm->id_);
 
       // Get normalized coordinates [0,1]
@@ -690,9 +691,9 @@ py::dict BAHelpers::BundleShotPoses(
   for (const auto& shot_id : shot_ids) {
     const auto& shot = map.GetShot(shot_id);
     for (const auto& lm_obs : shot.GetLandmarkObservations()) {
-      const auto& obs = lm_obs.second;
+      const auto& obs = shot.GetObservationPool()->Get(lm_obs.second);
       ba.AddPointProjectionObservation(shot.id_, lm_obs.first->id_, obs.point,
-                                       obs.scale, obs.depth_prior);
+                                       obs.scale, std::nullopt);
     }
   }
   const double t_projections =
@@ -943,12 +944,12 @@ py::dict BAHelpers::Bundle(
 
     for (const auto& obs_entry : lm->GetObservations()) {
       map::Shot* shot = obs_entry.first;
-      const map::Observation* obs = obs_entry.second;
+      const auto& obs = shot->GetObservationPool()->Get(obs_entry.second);
 
       auto s_it = shot_lookup.find(shot);
       if (s_it != shot_lookup.end()) {
-        ba.AddPointProjectionObservationRaw(s_it->second, bp, obs->point,
-                                            obs->scale, obs->depth_prior);
+        ba.AddPointProjectionObservationRaw(s_it->second, bp, obs.point,
+                                            obs.scale, std::nullopt);
         ++added_reprojections;
       }
     }

@@ -1,5 +1,6 @@
 #pragma once
 #include <map/defines.h>
+#include <map/observation_pool.h>
 
 #include <Eigen/Eigen>
 #include <iostream>
@@ -22,12 +23,13 @@ class Landmark {
   void SetColor(const Vec3i& color) { color_ = color; }
 
   // Utility functions
-  void AddObservation(Shot* shot, const Observation* observation);
+  void AddObservation(Shot* shot, ObservationIndex obs_idx,
+                      ObservationPool* pool);
   void RemoveObservation(Shot* shot);
   size_t NumberOfObservations() const;
   FeatureId GetObservationIdInShot(Shot* shot) const;
   const Observation& GetObservationInShot(Shot* shot) const;
-  const std::map<Shot*, const Observation*, KeyCompare>& GetObservations() const;
+  const std::map<Shot*, ObservationIndex, KeyCompare>& GetObservations() const;
   void ClearObservations() { observations_.clear(); }
 
   // Comparisons
@@ -49,8 +51,11 @@ class Landmark {
 
  private:
   Vec3d global_pos_;  // point in global
-  std::map<Shot*, const Observation*, KeyCompare> observations_;
+  std::map<Shot*, ObservationIndex, KeyCompare> observations_;
   Vec3i color_;
   std::map<ShotId, Eigen::VectorXd> reproj_errors_;
+
+  // Non-owning pointer to shared observation pool (set by Map)
+  ObservationPool* pool_{nullptr};
 };
 }  // namespace map

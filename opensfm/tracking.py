@@ -140,6 +140,8 @@ def create_tracks_manager_from_matches_iter(
                 segmentation,
                 instance,
             )
+            tracks_manager.add_observation(image, str(track_id), obs)
+            num_observations += 1
             if image in depths:
                 depth_value = depths[image][featureid]
                 if not np.isnan(depth_value) and not np.isinf(depth_value):
@@ -147,14 +149,16 @@ def create_tracks_manager_from_matches_iter(
                         depth_std_deviation * depth_value,  # pyre-ignore
                         depth_std_deviation,
                     )
-                    obs.depth_prior = pymap.Depth(
-                        value=depth_value,  # pyre-ignore
-                        std_deviation=std,
-                        is_radial=depth_is_radial,
+                    tracks_manager.set_depth_prior(
+                        image,
+                        str(track_id),
+                        pymap.Depth(
+                            value=depth_value,  # pyre-ignore
+                            std_deviation=std,
+                            is_radial=depth_is_radial,
+                        ),
                     )
                     num_depth_priors += 1
-            tracks_manager.add_observation(image, str(track_id), obs)
-            num_observations += 1
     logger.info(
         f"{len(tracks)} tracks, {num_observations} observations,"
         f" {num_depth_priors} depth priors added to TracksManager"

@@ -350,7 +350,9 @@ TEST_F(ToyMapFixture, ToTracksManager) {
     ASSERT_EQ(shot_obs1.size(), shot_obs2.size());
     for (const auto& lm_obs : shot_obs2) {
       ASSERT_NE(shot_obs1.find(lm_obs.first->id_), shot_obs1.end());
-      ASSERT_EQ(lm_obs.second, shot_obs1.at(lm_obs.first->id_));
+      const auto& obs =
+          shot_pair.second.GetObservationPool()->Get(lm_obs.second);
+      ASSERT_EQ(obs, shot_obs1.at(lm_obs.first->id_));
     }
   }
 }

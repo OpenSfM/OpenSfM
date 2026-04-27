@@ -55,15 +55,12 @@ int FilterBadlyConditionedPoints(map::Map& map, double min_angle_deg,
       }
 
       // Get the shot's Observation for this landmark.
-      map::Observation* obs_ptr =
+      const auto& obs =
           shot_ptr->GetLandmarkObservation(const_cast<map::Landmark*>(&lm));
-      if (!obs_ptr) {
-        continue;
-      }
 
       cameras.push_back(*cam_ptr);
       poses.push_back(*pose_ptr);
-      obs_vec.push_back(obs_ptr->point);
+      obs_vec.push_back(obs.point);
     }
 
     // First simple check based on angle between all pairs of raysmap

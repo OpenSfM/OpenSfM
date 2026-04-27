@@ -1,4 +1,5 @@
 #include <map/landmark.h>
+#include <map/observation_pool.h>
 #include <map/rig.h>
 #include <map/shot.h>
 
@@ -124,14 +125,7 @@ void ShotMeasurements::Set(const ShotMeasurements& other) {
   attributes_ = other.GetAttributes();
 }
 
-void Shot::RemoveLandmarkObservation(const FeatureId id) {
-  const auto find_feature = landmark_id_.find(id);
-  if (find_feature == landmark_id_.end()) {
-    throw std::runtime_error("Can't find Feature ID " + std::to_string(id) +
-                             " in Shot " + this->id_);
-  }
-  auto* lm = find_feature->second;
-  landmark_id_.erase(id);
+void Shot::RemoveLandmarkObservation(Landmark* lm) {
   landmark_observations_.erase(lm);
 }
 
@@ -190,7 +184,7 @@ Vec3d Shot::LandmarkBearing(const Landmark* landmark) const {
   if (it == landmark_observations_.end()) {
     throw std::runtime_error("Landmark not observed in this shot");
   }
-  const Observation& obs = it->second;
+  const Observation& obs = pool_->Get(it->second);
   return Bearing(obs.point);
 }
 

@@ -7,6 +7,7 @@
 #include <map/dataviews.h>
 #include <map/defines.h>
 #include <map/landmark.h>
+#include <map/observation_pool.h>
 #include <map/rig.h>
 #include <map/shot.h>
 #include <map/tracks_manager.h>
@@ -152,9 +153,22 @@ class Map {
                       const Observation& obs);
   void AddObservation(const ShotId& shot_id, const LandmarkId& lm_id,
                       const Observation& obs);
+  void AddObservationByIndex(Shot* const shot, Landmark* const lm,
+                             ObservationIndex obs_idx);
+  void AddObservationByIndex(const ShotId& shot_id, const LandmarkId& lm_id,
+                             ObservationIndex obs_idx);
   void RemoveObservation(const ShotId& shot_id, const LandmarkId& lm_id);
   void ClearObservationsAndLandmarks();
   void CleanLandmarksBelowMinObservations(const size_t min_observations);
+
+  // Observation pool management
+  void SetObservationPool(const std::shared_ptr<ObservationPool>& pool) {
+    observation_pool_ = pool;
+  }
+  const std::shared_ptr<ObservationPool>& GetObservationPool() const {
+    return observation_pool_;
+  }
+  ObservationPool* GetOrCreateObservationPool();
 
   // Map information and access methods
   size_t NumberOfShots() const { return shots_.size(); }
@@ -208,6 +222,9 @@ class Map {
   std::unordered_map<LandmarkId, Landmark> landmarks_;
   std::unordered_map<RigInstanceId, RigInstance> rig_instances_;
   std::unordered_map<RigCameraId, RigCamera> rig_cameras_;
+
+  // Shared observation pool (shared with TracksManager when available)
+  std::shared_ptr<ObservationPool> observation_pool_;
 
   geo::TopocentricConverter topo_conv_;
 };

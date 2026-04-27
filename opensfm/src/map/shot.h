@@ -5,6 +5,7 @@
 #include <map/defines.h>
 #include <map/landmark.h>
 #include <map/observation.h>
+#include <map/observation_pool.h>
 #include <map/rig.h>
 
 #include <Eigen/Eigen>
@@ -77,15 +78,11 @@ class Shot {
   Mat4d GetCamToWorld() const { return GetPose()->CameraToWorld(); }
 
   // Landmark management
-  const std::map<
-      Landmark*, Observation, KeyCompare,
-      Eigen::aligned_allocator<std::pair<Landmark* const, Observation>>>&
+  const std::map<Landmark*, ObservationIndex, KeyCompare>&
   GetLandmarkObservations() const {
     return landmark_observations_;
   }
-  std::map<Landmark*, Observation, KeyCompare,
-           Eigen::aligned_allocator<std::pair<Landmark* const, Observation>>>&
-  GetLandmarkObservations() {
+  std::map<Landmark*, ObservationIndex, KeyCompare>& GetLandmarkObservations() {
     return landmark_observations_;
   }
   std::vector<Landmark*> ComputeValidLandmarks() {
@@ -98,34 +95,22 @@ class Shot {
   }
 
   // Observation management
-  const Observation& GetObservation(const FeatureId id) const {
-    return landmark_observations_.at(landmark_id_.at(id));
+  ObservationIndex CreateObservation(Landmark* lm, ObservationIndex obs_idx,
+                                     ObservationPool* pool) {
+    pool_ = pool;
+    landmark_observations_.insert(std::make_pair(lm, obs_idx));
+    return obs_idx;
   }
-  const Observation* CreateObservation(Landmark* lm, const Observation& obs) {
-    const auto inserted =
-        landmark_observations_.insert(std::make_pair(lm, obs));
-    landmark_id_.insert(std::make_pair(obs.feature_id, lm));
-    return &inserted.first->second;
+  const Observation& GetLandmarkObservation(Landmark* lm) const {
+    return pool_->Get(landmark_observations_.at(lm));
   }
-  Observation* GetLandmarkObservation(Landmark* lm) {
-    return &landmark_observations_.at(lm);
-  }
-  Landmark* GetObservationLandmark(const FeatureId id) {
-    auto find_landmark = landmark_id_.find(id);
-    if (find_landmark == landmark_id_.end()) {
-      return nullptr;
-    } else {
-      return find_landmark->second;
-    }
-  }
-  void RemoveLandmarkObservation(const FeatureId id);
+  ObservationPool* GetObservationPool() const { return pool_; }
+  void RemoveLandmarkObservation(Landmark* lm);
   void ClearLandmarkObservationsUnsafe() {
     // Use swap idiom to actually release memory, not just clear elements.
     // clear() may retain allocated memory/bucket capacity.
     decltype(landmark_observations_) empty_obs;
     landmark_observations_.swap(empty_obs);
-    decltype(landmark_id_) empty_ids;
-    landmark_id_.swap(empty_ids);
   }
 
   // Metadata such as GPS, IMU, time
@@ -186,9 +171,9 @@ class Shot {
   ShotMeasurements shot_measurements_;
 
   // In OpenSfM, we use a map to reproduce a similar behaviour
-  std::map<Landmark*, Observation, KeyCompare,
-           Eigen::aligned_allocator<std::pair<Landmark* const, Observation>>>
-      landmark_observations_;
-  std::unordered_map<FeatureId, Landmark*> landmark_id_;
+  std::map<Landmark*, ObservationIndex, KeyCompare> landmark_observations_;
+
+  // Non-owning pointer to shared observation pool (set by Map)
+  ObservationPool* pool_{nullptr};
 };
 }  // namespace map

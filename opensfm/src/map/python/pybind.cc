@@ -72,6 +72,11 @@ PYBIND11_MODULE(pymap, m) {
       .def_readwrite("is_radial", &map::Depth::is_radial)
       .def_readwrite("std_deviation", &map::Depth::std_deviation);
 
+  // ObservationPool is opaque to Python — only passed between
+  // TracksManager.get_observation_pool() and Map.set_observation_pool().
+  py::class_<map::ObservationPool, std::shared_ptr<map::ObservationPool>>(
+      m, "ObservationPool");
+
   py::class_<map::Observation>(m, "Observation")
       .def(py::init<double, double, double, int, int, int, int, int, int>(),
            py::arg("x"), py::arg("y"), py::arg("s"), py::arg("r"), py::arg("g"),
@@ -84,7 +89,6 @@ PYBIND11_MODULE(pymap, m) {
       .def_readwrite("color", &map::Observation::color)
       .def_readwrite("segmentation", &map::Observation::segmentation_id)
       .def_readwrite("instance", &map::Observation::instance_id)
-      .def_readwrite("depth_prior", &map::Observation::depth_prior)
       .def_readonly_static("NO_SEMANTIC_VALUE",
                            &map::Observation::NO_SEMANTIC_VALUE)
       .def(
@@ -100,8 +104,16 @@ PYBIND11_MODULE(pymap, m) {
       .def_readonly("id", &map::Landmark::id_)
       .def_property("coordinates", &map::Landmark::GetGlobalPos,
                     &map::Landmark::SetGlobalPos)
-      .def("get_observations", &map::Landmark::GetObservations,
-           py::return_value_policy::reference_internal)
+      .def("get_observations",
+           [](const map::Landmark& lm) {
+             py::dict result;
+             for (const auto& [shot, idx] : lm.GetObservations()) {
+               result[py::cast(shot, py::return_value_policy::reference)] =
+                   py::cast(lm.GetObservationInShot(shot),
+                            py::return_value_policy::copy);
+             }
+             return result;
+           })
       .def("number_of_observations", &map::Landmark::NumberOfObservations)
       .def_property("reprojection_errors",
                     &map::Landmark::GetReprojectionErrors,
@@ -229,8 +241,6 @@ PYBIND11_MODULE(pymap, m) {
       .def_property_readonly("rig_instance_id", &map::Shot::GetRigInstanceId)
       .def_property_readonly("rig_camera_id", &map::Shot::GetRigCameraId)
       .def("set_rig", &map::Shot::SetRig)
-      .def("get_observation", &map::Shot::GetObservation,
-           py::return_value_policy::reference_internal)
       .def("get_valid_landmarks", &map::Shot::ComputeValidLandmarks)
       .def("remove_observation", &map::Shot::RemoveLandmarkObservation)
       .def_property("metadata",
@@ -243,9 +253,7 @@ PYBIND11_MODULE(pymap, m) {
       .def_property_readonly("camera", &map::Shot::GetCamera,
                              py::return_value_policy::reference_internal)
       .def("get_landmark_observation", &map::Shot::GetLandmarkObservation,
-           py::return_value_policy::reference_internal)
-      .def("get_observation_landmark", &map::Shot::GetObservationLandmark,
-           py::return_value_policy::reference_internal)
+           py::return_value_policy::copy)
       .def("project", &map::Shot::Project)
       .def("project_many", &map::Shot::ProjectMany)
       .def("bearing", &map::Shot::Bearing)
@@ -291,6 +299,8 @@ PYBIND11_MODULE(pymap, m) {
       .def_static("merge_tracks_manager",
                   &map::TracksManager::MergeTracksManager)
       .def("add_observation", &map::TracksManager::AddObservation)
+      .def("set_depth_prior", &map::TracksManager::SetDepthPrior)
+      .def("get_depth_prior", &map::TracksManager::GetDepthPrior)
       .def("num_shots", &map::TracksManager::NumShots)
       .def("num_tracks", &map::TracksManager::NumTracks)
       .def("get_shot_ids", &map::TracksManager::GetShotIds)
@@ -312,7 +322,9 @@ PYBIND11_MODULE(pymap, m) {
            &map::TracksManager::GetAllPairsConnectivity,
            py::arg("shots") = std::vector<map::ShotId>(),
            py::arg("tracks") = std::vector<map::TrackId>(),
-           py::call_guard<py::gil_scoped_release>());
+           py::call_guard<py::gil_scoped_release>())
+      .def("get_observation_index", &map::TracksManager::GetObservationIndex)
+      .def("get_observation_pool", &map::TracksManager::GetObservationPool);
 
   py::class_<map::PanoShotView>(m, "PanoShotView")
       .def(py::init<map::Map&>(),
@@ -665,6 +677,12 @@ PYBIND11_MODULE(pymap, m) {
                const map::ShotId&,
                const map::LandmarkId&))&map::Map::RemoveObservation,
            py::arg("shot"), py::arg("landmark"))
+      .def("set_observation_pool", &map::Map::SetObservationPool)
+      .def("add_observation_by_index",
+           (void (map::Map::*)(
+               const map::ShotId&, const map::LandmarkId&,
+               map::ObservationIndex))&map::Map::AddObservationByIndex,
+           py::arg("shot_id"), py::arg("landmark_id"), py::arg("obs_index"))
       // Getters
       .def("get_shots", &map::Map::GetShotView)
       .def("get_pano_shots", &map::Map::GetPanoShotView)

@@ -255,7 +255,8 @@ class Reconstruction:
 
         rig_camera_id = f"{PANOSHOT_RIG_PREFIX}{camera_id}"
         if rig_camera_id not in self.rig_cameras:
-            self.add_rig_camera(pymap.RigCamera(pygeometry.Pose(), rig_camera_id))
+            self.add_rig_camera(pymap.RigCamera(
+                pygeometry.Pose(), rig_camera_id))
         rig_instance_id = f"{PANOSHOT_RIG_PREFIX}{shot_id}"
         if rig_instance_id not in self.rig_instances:
             self.add_rig_instance(pymap.RigInstance(rig_instance_id))
@@ -320,6 +321,12 @@ class Reconstruction:
         """
         self.map.add_observation(shot_id, lm_id, observation)
 
+    def add_observation_by_index(
+        self, shot_id: str, lm_id: str, obs_index: int
+    ) -> None:
+        """Adds an observation by pool index (zero-copy from TracksManager)."""
+        self.map.add_observation_by_index(shot_id, lm_id, obs_index)
+
     def remove_observation(self, shot_id: str, lm_id: str) -> None:
         self.map.remove_observation(shot_id, lm_id)
 
@@ -339,11 +346,14 @@ class Reconstruction:
     def add_correspondences_from_tracks_manager(
         self, tracks_manager: pymap.TracksManager
     ) -> None:
+        self.map.set_observation_pool(tracks_manager.get_observation_pool())
         for track_id in tracks_manager.get_track_ids():
             if track_id not in self.points:
                 continue
             track_obs = tracks_manager.get_track_observations(track_id)
             for shot_id in track_obs.keys():
                 if shot_id in self.shots:
-                    observation = tracks_manager.get_observation(shot_id, track_id)
-                    self.add_observation(shot_id, track_id, observation)
+                    obs_idx = tracks_manager.get_observation_index(
+                        shot_id, track_id
+                    )
+                    self.add_observation_by_index(shot_id, track_id, obs_idx)

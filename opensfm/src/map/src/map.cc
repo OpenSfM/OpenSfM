@@ -2,6 +2,7 @@
 #include <map/defines.h>
 #include <map/landmark.h>
 #include <map/map.h>
+#include <map/observation_pool.h>
 #include <map/rig.h>
 #include <map/shot.h>
 
@@ -49,10 +50,14 @@ std::unique_ptr<Map> Map::DeepCopy(const Map& map, bool copy_observations) {
   }
 
   if (copy_observations) {
+    // Share the observation pool rather than copying observations individually
+    if (map.observation_pool_) {
+      map_copy->observation_pool_ = map.observation_pool_;
+    }
     for (const auto& shot : shots) {
       for (const auto& landmark_n_obs : shot.second.GetLandmarkObservations()) {
-        map_copy->AddObservation(shot.first, landmark_n_obs.first->id_,
-                                 landmark_n_obs.second);
+        map_copy->AddObservationByIndex(shot.first, landmark_n_obs.first->id_,
+                                        landmark_n_obs.second);
       }
     }
   }
@@ -66,8 +71,10 @@ std::unique_ptr<Map> Map::DeepCopy(const Map& map, bool copy_observations) {
 
 void Map::AddObservation(Shot* const shot, Landmark* const lm,
                          const Observation& obs) {
-  auto* observation = shot->CreateObservation(lm, obs);
-  lm->AddObservation(shot, observation);
+  auto* pool = GetOrCreateObservationPool();
+  ObservationIndex idx = pool->Add(obs);
+  shot->CreateObservation(lm, idx, pool);
+  lm->AddObservation(shot, idx, pool);
 }
 
 void Map::AddObservation(const ShotId& shot_id, const LandmarkId& lm_id,
@@ -77,10 +84,31 @@ void Map::AddObservation(const ShotId& shot_id, const LandmarkId& lm_id,
   AddObservation(&shot, &lm, obs);
 }
 
+void Map::AddObservationByIndex(Shot* const shot, Landmark* const lm,
+                                ObservationIndex obs_idx) {
+  auto* pool = GetOrCreateObservationPool();
+  shot->CreateObservation(lm, obs_idx, pool);
+  lm->AddObservation(shot, obs_idx, pool);
+}
+
+void Map::AddObservationByIndex(const ShotId& shot_id, const LandmarkId& lm_id,
+                                ObservationIndex obs_idx) {
+  auto& shot = GetShot(shot_id);
+  auto& lm = GetLandmark(lm_id);
+  AddObservationByIndex(&shot, &lm, obs_idx);
+}
+
+ObservationPool* Map::GetOrCreateObservationPool() {
+  if (!observation_pool_) {
+    observation_pool_ = std::make_shared<ObservationPool>();
+  }
+  return observation_pool_.get();
+}
+
 void Map::RemoveObservation(const ShotId& shot_id, const LandmarkId& lm_id) {
   auto& shot = GetShot(shot_id);
   auto& lm = GetLandmark(lm_id);
-  shot.RemoveLandmarkObservation(lm.GetObservationIdInShot(&shot));
+  shot.RemoveLandmarkObservation(&lm);
   lm.RemoveObservation(&shot);
 }
 
@@ -136,18 +164,20 @@ void Map::ClearObservationsAndLandmarks() {
   }
   decltype(landmarks_) empty_landmarks;
   landmarks_.swap(empty_landmarks);
+  // Don't touch observation_pool_ — it's shared and immutable (owned by
+  // TracksManager). The caller (e.g. ReconstructFromTracksManager) will
+  // re-set the pool via SetObservationPool() if needed.
 }
 
 void Map::CleanLandmarksBelowMinObservations(const size_t min_observations) {
   for (auto it = landmarks_.begin(); it != landmarks_.end();) {
-    const auto& landmark = it->second;
+    auto& landmark = it->second;
     if (landmark.NumberOfObservations() < min_observations) {
       // 2) Remove all its observation
       const auto& observations = landmark.GetObservations();
       for (const auto& obs : observations) {
         Shot* shot = obs.first;
-        const auto* feat = obs.second;
-        shot->RemoveLandmarkObservation(feat->feature_id);
+        shot->RemoveLandmarkObservation(&landmark);
       }
       // 3) Remove from landmarks
       it = landmarks_.erase(it);
@@ -297,14 +327,13 @@ void Map::RemoveLandmark(const LandmarkId& lm_id) {
   // 1) Find the landmark
   const auto& lm_it = landmarks_.find(lm_id);
   if (lm_it != landmarks_.end()) {
-    const auto& landmark = lm_it->second;
+    auto& landmark = lm_it->second;
 
     // 2) Remove all its observation
     const auto& observations = landmark.GetObservations();
     for (const auto& obs : observations) {
       Shot* shot = obs.first;
-      const auto feat = obs.second;
-      shot->RemoveLandmarkObservation(feat->feature_id);
+      shot->RemoveLandmarkObservation(&landmark);
     }
 
     // 3) Remove from landmarks
@@ -566,14 +595,17 @@ Map::GetValidObservations(const TracksManager& tracks_manager) const {
 
 TracksManager Map::ToTracksManager() const {
   TracksManager manager;
+  auto* pool = observation_pool_.get();
   for (const auto& shot_pair : shots_) {
     for (const auto& lm_obs : shot_pair.second.GetLandmarkObservations()) {
-      manager.AddObservation(shot_pair.first, lm_obs.first->id_, lm_obs.second);
+      manager.AddObservation(shot_pair.first, lm_obs.first->id_,
+                             pool->Get(lm_obs.second));
     }
   }
   for (const auto& shot_pair : pano_shots_) {
     for (const auto& lm_obs : shot_pair.second.GetLandmarkObservations()) {
-      manager.AddObservation(shot_pair.first, lm_obs.first->id_, lm_obs.second);
+      manager.AddObservation(shot_pair.first, lm_obs.first->id_,
+                             pool->Get(lm_obs.second));
     }
   }
   return manager;
