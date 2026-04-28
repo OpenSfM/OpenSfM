@@ -6,7 +6,10 @@
 #include <bundle/data/point.h>
 #include <bundle/data/pose.h>
 #include <bundle/data/shot.h>
+#include <bundle/irls_solver.h>
 #include <foundation/optional.h>
+#include <foundation/python_types.h>
+#include <foundation/types.h>
 #include <geometry/camera.h>
 #include <geometry/pose.h>
 #include <map/observation.h>
@@ -27,6 +30,7 @@
 extern "C" {
 #include <string.h>
 }
+namespace py = pybind11;
 
 namespace bundle {
 
@@ -63,7 +67,9 @@ struct PointProjectionObservation {
   Shot* shot;
   Camera* camera;
   double std_deviation;
+  bool is_gcp{false};
   std::optional<map::Depth> depth_prior;
+  std::optional<ResidualLocation> residual_location;
 };
 
 struct RelativeMotion {
@@ -203,11 +209,11 @@ class BundleAdjuster {
   // Real bundle adjustment : point projections
   void AddPointProjectionObservation(
       const std::string& shot, const std::string& point,
-      const Vec2d& observation, double std_deviation,
+      const Vec2d& observation, double std_deviation, bool is_gcp,
       const std::optional<map::Depth>& depth_prior = std::nullopt);
   void AddPointProjectionObservationRaw(
       Shot* shot, Point* point, const Vec2d& observation, double std_deviation,
-      const std::optional<map::Depth>& depth_prior);
+      bool is_gcp, const std::optional<map::Depth>& depth_prior);
 
   // Relative motion constraints
   void AddRelativeMotion(const RelativeMotion& rm);
@@ -267,10 +273,16 @@ class BundleAdjuster {
   bool GetCovarianceEstimationValid() const;
   void SetComputeReprojectionErrors(bool v);
 
+  void SetDefaultDensityRatio(double ratio);
+  double GetDefaultDensityRatio() const;
+  void SetGroupDensityRatio(const std::string& group_id, double ratio);
+  double GetGroupDensityRatio(const std::string& group_id) const;
+
   // Minimization
   void Run();
   void ComputeCovariances(ceres::Problem* problem);
   void ComputeReprojectionErrors();
+  void RetrieveProjectionWeights(IRLSSolver& solver);
 
   // Getters
   int GetProjectionsCount() const;
@@ -290,6 +302,7 @@ class BundleAdjuster {
   // Minimization details
   std::string BriefReport() const;
   std::string FullReport() const;
+  py::list IRLSReport() const;
   const ceres::Solver::Summary& CeresSolverSummary() const;
 
  private:
@@ -363,7 +376,12 @@ class BundleAdjuster {
   std::string linear_solver_type_;
   std::string covariance_algorithm_type_;
 
+  // IRLS density ratio configuration
+  double default_density_ratio_{0.001};
+  std::map<std::string, double> group_density_ratios_;
+
   // internal
-  ceres::Solver::Summary last_run_summary_;
+  ceres::Solver::Summary last_run_solver_summary_;
+  std::vector<std::string> last_run_irls_summary_;
 };
 }  // namespace bundle

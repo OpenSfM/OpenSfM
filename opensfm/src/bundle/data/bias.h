@@ -46,7 +46,7 @@ struct SimilarityPriorTransform
 
     // Apply similarity only to the translation component
     Vec3<T> point = transformed.template segment<3>(Pose::TX);
-    point = (scale[0] * RotatePoint(R.eval(), point) + t);
+    point = (scale[0] * RotatePoint(R.eval(), point)) + t;
     transformed.template segment<3>(Pose::TX) = point;
 
     return transformed;

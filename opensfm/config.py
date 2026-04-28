@@ -296,6 +296,12 @@ class OpenSfMConfig:
     optimize_rig_parameters: bool = False
     # Maximum optimizer iterations.
     bundle_max_iterations: int = 100
+    # Weight threshold below which a point is considered an outlier and removed from the reconstruction
+    bundle_outlier_weight_threshold: float = 0.5
+    # Default ratio of outlier to inlier density peaks for IRLS mixture model (all error groups)
+    bundle_irls_density_ratio: float = 0.001
+    # Density ratio override for GCP 2D projection residuals (set higher to be more lenient on GCPs)
+    bundle_irls_gcp_density_ratio: float = 0.00001
 
     # Ratio of (resection candidates / total tracks) of a given image so that it is culled at resection and resected later
     resect_redundancy_threshold: float = 0.7

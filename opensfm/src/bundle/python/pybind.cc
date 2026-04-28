@@ -53,8 +53,9 @@ PYBIND11_MODULE(pybundle, m) {
           "p", [](const bundle::Point& p) { return p.GetValue(); })
       .def_property_readonly("id",
                              [](const bundle::Point& p) { return p.GetID(); })
-      .def_readwrite("reprojection_errors",
-                     &bundle::Point::reprojection_errors);
+      .def_readwrite("reprojection_errors", &bundle::Point::reprojection_errors)
+      .def_readwrite("reprojection_weights",
+                     &bundle::Point::reprojection_weights);
 
   py::class_<bundle::BundleAdjuster>(m, "BundleAdjuster")
       .def(py::init())
@@ -97,7 +98,8 @@ PYBIND11_MODULE(pybundle, m) {
       .def("add_point_projection_observation",
            &bundle::BundleAdjuster::AddPointProjectionObservation,
            py::arg("shot"), py::arg("point"), py::arg("observation"),
-           py::arg("std_deviation"), py::arg("depth_prior") = std::nullopt)
+           py::arg("std_deviation"), py::arg("is_gcp") = false,
+           py::arg("depth_prior") = std::nullopt)
       .def("add_relative_motion", &bundle::BundleAdjuster::AddRelativeMotion)
       .def("add_relative_rotation",
            &bundle::BundleAdjuster::AddRelativeRotation)
@@ -132,8 +134,17 @@ PYBIND11_MODULE(pybundle, m) {
            &bundle::BundleAdjuster::SetUseAnalyticDerivatives)
       .def("set_linear_solver_type",
            &bundle::BundleAdjuster::SetLinearSolverType)
+      .def("set_default_density_ratio",
+           &bundle::BundleAdjuster::SetDefaultDensityRatio)
+      .def("get_default_density_ratio",
+           &bundle::BundleAdjuster::GetDefaultDensityRatio)
+      .def("set_group_density_ratio",
+           &bundle::BundleAdjuster::SetGroupDensityRatio)
+      .def("get_group_density_ratio",
+           &bundle::BundleAdjuster::GetGroupDensityRatio)
       .def("brief_report", &bundle::BundleAdjuster::BriefReport)
-      .def("full_report", &bundle::BundleAdjuster::FullReport);
+      .def("full_report", &bundle::BundleAdjuster::FullReport)
+      .def("irls_report", &bundle::BundleAdjuster::IRLSReport);
 
   ///////////////////////////////////
   // Reconstruction Alignment

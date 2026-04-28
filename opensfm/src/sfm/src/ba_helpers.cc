@@ -287,7 +287,7 @@ py::tuple BAHelpers::BundleLocal(
                                  " not found in bundle adjuster");
       }
       ba.AddPointProjectionObservationRaw(s_it->second, ba_point, obs.point,
-                                          obs.scale, std::nullopt);
+                                          obs.scale, false, std::nullopt);
       ++added_reprojections;
     }
   }
@@ -324,6 +324,10 @@ py::tuple BAHelpers::BundleLocal(
   ba.SetRigParametersPriorSD(config["rig_translation_sd"].cast<double>(),
                              config["rig_rotation_sd"].cast<double>());
 
+  ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(10);
   ba.SetLinearSolverType("SPARSE_SCHUR");
@@ -341,10 +345,21 @@ py::tuple BAHelpers::BundleLocal(
     instance.SetPose(i.GetValue());
   }
 
+  // Update points
   for (auto* point : points) {
-    const auto& pt = ba.GetPoint(point->id_);
+    auto pt = ba.GetPoint(point->id_);
+    if (!pt.GetValue().allFinite()) {
+      // set large reprojection errors
+      for (auto& proj_error : pt.reprojection_errors) {
+        proj_error.second.setConstant(1.0);
+      }
+      for (auto& proj_weight : pt.reprojection_weights) {
+        proj_weight.second = 0.0;
+      }
+    }
     point->SetGlobalPos(pt.GetValue());
     point->SetReprojectionErrors(pt.reprojection_errors);
+    point->SetReprojectionWeights(pt.reprojection_weights);
   }
 
   const auto timer_teardown = std::chrono::high_resolution_clock::now();
@@ -357,6 +372,7 @@ py::tuple BAHelpers::BundleLocal(
 
   report["brief_report"] = ba.BriefReport();
   report["full_report"] = ba.FullReport();
+  report["irls_report"] = ba.IRLSReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
   report["termination_type"] =
       ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
@@ -494,7 +510,8 @@ size_t BAHelpers::AddGCPToBundle(
       const auto& shot_id = obs.shot_id_;
       if (shots.count(shot_id) > 0) {
         ba.AddPointProjectionObservation(shot_id, point_id, obs.projection_,
-                                         gcp_observation_sd / obs_weight);
+                                         gcp_observation_sd / obs_weight, true,
+                                         std::nullopt);
         ++added_gcp_observations;
       }
     }
@@ -693,7 +710,7 @@ py::dict BAHelpers::BundleShotPoses(
     for (const auto& lm_obs : shot.GetLandmarkObservations()) {
       const auto& obs = shot.GetObservationPool()->Get(lm_obs.second);
       ba.AddPointProjectionObservation(shot.id_, lm_obs.first->id_, obs.point,
-                                       obs.scale, std::nullopt);
+                                       obs.scale, false, std::nullopt);
     }
   }
   const double t_projections =
@@ -718,6 +735,10 @@ py::dict BAHelpers::BundleShotPoses(
   ba.SetRigParametersPriorSD(config["rig_translation_sd"].cast<double>(),
                              config["rig_rotation_sd"].cast<double>());
 
+  ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(10);
   ba.SetLinearSolverType("DENSE_QR");
@@ -739,6 +760,7 @@ py::dict BAHelpers::BundleShotPoses(
   const auto timer_teardown = std::chrono::high_resolution_clock::now();
   report["brief_report"] = ba.BriefReport();
   report["full_report"] = ba.FullReport();
+  report["irls_report"] = ba.IRLSReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
   report["termination_type"] =
       ceres::TerminationTypeToString(ba.CeresSolverSummary().termination_type);
@@ -949,7 +971,7 @@ py::dict BAHelpers::Bundle(
       auto s_it = shot_lookup.find(shot);
       if (s_it != shot_lookup.end()) {
         ba.AddPointProjectionObservationRaw(s_it->second, bp, obs.point,
-                                            obs.scale, std::nullopt);
+                                            obs.scale, false, std::nullopt);
         ++added_reprojections;
       }
     }
@@ -995,6 +1017,10 @@ py::dict BAHelpers::Bundle(
   ba.SetRigParametersPriorSD(config["rig_translation_sd"].cast<double>(),
                              config["rig_rotation_sd"].cast<double>());
 
+  ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(config["bundle_max_iterations"].cast<int>());
   ba.SetLinearSolverType("SPARSE_SCHUR");
@@ -1020,6 +1046,7 @@ py::dict BAHelpers::Bundle(
   const auto timer_triangulate = std::chrono::high_resolution_clock::now();
 
   report["brief_report"] = ba.BriefReport();
+  report["irls_report"] = ba.IRLSReport();
   report["full_report"] = ba.FullReport();
   report["is_solution_usable"] = ba.CeresSolverSummary().IsSolutionUsable();
   report["termination_type"] =
@@ -1114,9 +1141,13 @@ void BAHelpers::BundleToMap(const bundle::BundleAdjuster& bundle_adjuster,
       for (auto& proj_error : pt.reprojection_errors) {
         proj_error.second.setConstant(1.0);
       }
+      for (auto& proj_weight : pt.reprojection_weights) {
+        proj_weight.second = 0.0;
+      }
     }
     point.second.SetGlobalPos(pt.GetValue());
     point.second.SetReprojectionErrors(pt.reprojection_errors);
+    point.second.SetReprojectionWeights(pt.reprojection_weights);
   }
 }
 

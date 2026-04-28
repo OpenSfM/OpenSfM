@@ -86,6 +86,8 @@ def bundle(
     )
     log_bundle_stats("GLOBAL", report)
     logger.debug(report["brief_report"])
+    for line in report["irls_report"]:
+        logger.debug(line)
     return report
 
 
@@ -160,6 +162,8 @@ def bundle_local(
     )
     log_bundle_stats("LOCAL", report)
     logger.debug(report["brief_report"])
+    for line in report["irls_report"]:
+        logger.debug(line)
     return pt_ids, report
 
 
@@ -1213,14 +1217,20 @@ def remove_outliers(
     if points is None:
         points = reconstruction.points
     threshold_sqr = get_actual_threshold(config, reconstruction.points) ** 2
+    weight_threshold = config.get("bundle_outlier_weight_threshold", 0.5)
+
     outliers = []
     for point_id in points:
-        for shot_id, error in reconstruction.points[
-            point_id
-        ].reprojection_errors.items():
+        point = reconstruction.points[point_id]
+        for shot_id, error in point.reprojection_errors.items():
             error_sqr = error[0] ** 2 + error[1] ** 2
             if error_sqr > threshold_sqr:
                 outliers.append((point_id, shot_id))
+        for shot_id, weight in point.reprojection_weights.items():
+            if weight < weight_threshold:
+                outliers.append((point_id, shot_id))
+
+    outliers = list(set(outliers))
 
     track_ids = set()
     for track, shot_id in outliers:

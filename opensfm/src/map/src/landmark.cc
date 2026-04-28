@@ -17,13 +17,16 @@ void Landmark::SetReprojectionErrors(
 void Landmark::RemoveObservation(Shot* shot) {
   // Remove reprojection errors if present
   RemoveReprojectionError(shot->id_);
+  // Remove reprojection weights if present
+  RemoveReprojectionWeight(shot->id_);
   observations_.erase(shot);
 }
 
 FeatureId Landmark::GetObservationIdInShot(Shot* shot) const {
   auto obs_it = observations_.find(shot);
   if (obs_it == observations_.end()) {
-    throw std::runtime_error("Accessing with invalid shot ptr!");
+    throw std::runtime_error("No observation for landmark " + id_ +
+                             " in shot " + shot->GetId());
   }
   return pool_->Get(obs_it->second).feature_id;
 }
@@ -31,7 +34,8 @@ FeatureId Landmark::GetObservationIdInShot(Shot* shot) const {
 const Observation& Landmark::GetObservationInShot(Shot* shot) const {
   auto obs_it = observations_.find(shot);
   if (obs_it == observations_.end()) {
-    throw std::runtime_error("Accessing with invalid shot ptr!");
+    throw std::runtime_error("No observation for landmark " + id_ +
+                             " in shot " + shot->GetId());
   }
   return pool_->Get(obs_it->second);
 }
@@ -56,6 +60,18 @@ void Landmark::RemoveReprojectionError(const ShotId& shot_id) {
   }
 }
 
+void Landmark::SetReprojectionWeights(const std::map<ShotId, double>& weights) {
+  reproj_weights_ = weights;
+}
+std::map<ShotId, double> Landmark::GetReprojectionWeights() const {
+  return reproj_weights_;
+}
+void Landmark::RemoveReprojectionWeight(const ShotId& shot_id) {
+  auto it = reproj_weights_.find(shot_id);
+  if (it != reproj_weights_.end()) {
+    reproj_weights_.erase(it);
+  }
+}
 size_t Landmark::NumberOfObservations() const { return observations_.size(); }
 
 };  // namespace map

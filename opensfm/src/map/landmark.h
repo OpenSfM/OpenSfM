@@ -46,6 +46,9 @@ class Landmark {
   std::map<ShotId, Eigen::VectorXd> GetReprojectionErrors() const;
   void RemoveReprojectionError(const ShotId& shot_id);
 
+  void SetReprojectionWeights(const std::map<ShotId, double>& weights);
+  std::map<ShotId, double> GetReprojectionWeights() const;
+  void RemoveReprojectionWeight(const ShotId& shot_id);
  public:
   const LandmarkId id_;
 
@@ -54,7 +57,8 @@ class Landmark {
   std::map<Shot*, ObservationIndex, KeyCompare> observations_;
   Vec3i color_;
   std::map<ShotId, Eigen::VectorXd> reproj_errors_;
-
+  std::map<ShotId, double> reproj_weights_;
+  
   // Non-owning pointer to shared observation pool (set by Map)
   ObservationPool* pool_{nullptr};
 };

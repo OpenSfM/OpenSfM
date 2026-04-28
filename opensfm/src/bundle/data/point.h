@@ -20,6 +20,7 @@ struct Point : public Data<Vec3d> {
   }
 
   std::map<std::string, VecXd> reprojection_errors;
+  std::map<std::string, double> reprojection_weights;
   bool has_altitude_prior{true};
 
  private:
