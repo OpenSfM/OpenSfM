@@ -61,8 +61,6 @@ PYBIND11_MODULE(pybundle, m) {
       .def(py::init())
       .def("run", &bundle::BundleAdjuster::Run,
            py::call_guard<py::gil_scoped_release>())
-      .def("set_point_projection_loss_function",
-           &bundle::BundleAdjuster::SetPointProjectionLossFunction)
       .def("set_relative_motion_loss_function",
            &bundle::BundleAdjuster::SetRelativeMotionLossFunction)
       .def("add_camera", &bundle::BundleAdjuster::AddCamera)

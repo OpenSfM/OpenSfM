@@ -61,20 +61,33 @@ class WhiteningCostFunction : public ceres::CostFunction {
   const Eigen::MatrixXd* sqrt_inv_ptr_;
 };
 
-// Wrapper class that scales residuals by sqrt(weight).
+// Composed loss: applies the original loss function first, then scales by
+// the IRLS weight. When original_loss is nullptr, behaves as pure weighted L2.
+// This preserves robust loss behavior for groups too small for IRLS
+// reweighting.
 class IRLSWeightLoss : public ceres::LossFunction {
  public:
-  explicit IRLSWeightLoss(const double* weight_ptr) : weight_ptr_(weight_ptr) {}
+  IRLSWeightLoss(const double* weight_ptr, ceres::LossFunction* original_loss)
+      : weight_ptr_(weight_ptr), original_loss_(original_loss) {}
 
   void Evaluate(double s, double rho[3]) const override {
     const double w = *weight_ptr_;
-    rho[0] = w * s;
-    rho[1] = w;
-    rho[2] = 0.0;
+    if (original_loss_) {
+      double orig_rho[3];
+      original_loss_->Evaluate(s, orig_rho);
+      rho[0] = w * orig_rho[0];
+      rho[1] = w * orig_rho[1];
+      rho[2] = w * orig_rho[2];
+    } else {
+      rho[0] = w * s;
+      rho[1] = w;
+      rho[2] = 0.0;
+    }
   }
 
  private:
   const double* weight_ptr_;
+  ceres::LossFunction* original_loss_;  // Not owned
 };
 
 class IRLSIterationCallback : public ceres::IterationCallback {
@@ -83,7 +96,7 @@ class IRLSIterationCallback : public ceres::IterationCallback {
       : solver_(solver), interval_(interval), max_rounds_(max_rounds) {}
 
   ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) {
-    const double kFunctionTolerance = 1e-8;
+    const double kFunctionTolerance = 1e-7;
     const double kGradientTolerance = 1e-10;
     const double kParameterTolerance = 1e-8;
 
@@ -116,7 +129,7 @@ class IRLSIterationCallback : public ceres::IterationCallback {
       }
     }
 
-    if ((summary.iteration > 0 && summary.iteration % interval_ == 0 &&
+    if ((summary.iteration > 0 && (summary.iteration % interval_ == 0) &&
          summary.step_is_successful) ||
         inner_converged) {
       double prev_ll = solver_->GetLogLikelihood();
@@ -139,7 +152,7 @@ class IRLSIterationCallback : public ceres::IterationCallback {
       }
 
       double rel_diff = 0.0;
-      if (prev_ll > -std::numeric_limits<double>::infinity() && new_ll != 0.0) {
+      if (prev_ll > -std::numeric_limits<double>::infinity()) {
         double abs_diff = std::abs(new_ll - prev_ll);
         rel_diff = abs_diff / (std::abs(prev_ll) + 1e-20);
       }
@@ -148,7 +161,7 @@ class IRLSIterationCallback : public ceres::IterationCallback {
       solver_->AddIterationSummary(ss.str());
 
       current_round_++;
-      if (prev_ll > -std::numeric_limits<double>::infinity() && new_ll != 0.0) {
+      if (prev_ll > -std::numeric_limits<double>::infinity()) {
         if (rel_diff < 1e-3) {
           return ceres::SOLVER_TERMINATE_SUCCESSFULLY;
         }
@@ -222,7 +235,7 @@ void IRLSSolver::SetParameterUpperBound(double* values, int index,
 }
 
 ResidualLocation IRLSSolver::AddResidualBlock(
-    ceres::CostFunction* cost_function, ceres::LossFunction* /*loss_function*/,
+    ceres::CostFunction* cost_function, ceres::LossFunction* loss_function,
     const std::string& group_id, const std::vector<double*>& parameter_blocks) {
   auto& error_group = error_groups_[group_id];
   error_group.group_id = group_id;
@@ -233,11 +246,13 @@ ResidualLocation IRLSSolver::AddResidualBlock(
   res_info.whitened_cost_function = nullptr;
   res_info.weight = new double(1.0);
   res_info.irls_loss = nullptr;
+  res_info.original_loss = loss_function;
 
   error_group.residuals_info.push_back(res_info);
   auto& stored_res_info = error_group.residuals_info.back();
 
-  stored_res_info.irls_loss = new IRLSWeightLoss(stored_res_info.weight);
+  stored_res_info.irls_loss =
+      new IRLSWeightLoss(stored_res_info.weight, loss_function);
 
   ceres::CostFunction* final_cost_function = cost_function;
   if (error_group.enable_whitening) {

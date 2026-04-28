@@ -15,7 +15,9 @@ struct ResidualInfo {
   ceres::ResidualBlockId id;
   ceres::CostFunction* cost_function;  // Original unweighted cost function
   ceres::CostFunction* whitened_cost_function;  // Whitening wrapper (if used)
-  ceres::LossFunction* irls_loss;  // IRLSWeightLoss owned by this struct
+  ceres::LossFunction* irls_loss;  // Composed loss (original + IRLS weight)
+  ceres::LossFunction*
+      original_loss;  // Original loss passed by caller (not owned)
   std::string group_id;
   double* weight;  // IRLS weight
 };

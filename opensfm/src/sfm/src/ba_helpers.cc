@@ -308,9 +308,6 @@ py::tuple BAHelpers::BundleLocal(
         1000000.0;
   }
 
-  ba.SetPointProjectionLossFunction(
-      config["loss_function"].cast<std::string>(),
-      config["loss_function_threshold"].cast<double>());
   ba.SetInternalParametersPriorSD(
       config["exif_focal_sd"].cast<double>(),
       config["aspect_ratio_sd"].cast<double>(),
@@ -719,9 +716,6 @@ py::dict BAHelpers::BundleShotPoses(
           .count() /
       1000000.0;
 
-  ba.SetPointProjectionLossFunction(
-      config["loss_function"].cast<std::string>(),
-      config["loss_function_threshold"].cast<double>());
   ba.SetInternalParametersPriorSD(
       config["exif_focal_sd"].cast<double>(),
       config["aspect_ratio_sd"].cast<double>(),
@@ -1001,9 +995,6 @@ py::dict BAHelpers::Bundle(
     }
   }
 
-  ba.SetPointProjectionLossFunction(
-      config["loss_function"].cast<std::string>(),
-      config["loss_function_threshold"].cast<double>());
   ba.SetInternalParametersPriorSD(
       config["exif_focal_sd"].cast<double>(),
       config["aspect_ratio_sd"].cast<double>(),

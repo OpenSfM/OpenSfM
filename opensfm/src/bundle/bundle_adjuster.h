@@ -252,7 +252,6 @@ class BundleAdjuster {
                         const std::string& shot_scale);
 
   // Minimization setup
-  void SetPointProjectionLossFunction(std::string name, double threshold);
   void SetRelativeMotionLossFunction(std::string name, double threshold);
   void SetAdjustAbsolutePositionStd(bool adjust);
 
@@ -359,8 +358,6 @@ class BundleAdjuster {
   double rig_rotation_sd_{1.0};
 
   // minimization setup
-  std::string point_projection_loss_name_;
-  double point_projection_loss_threshold_;
   std::string relative_motion_loss_name_;
   double relative_motion_loss_threshold_;
   bool adjust_absolute_position_std_;

@@ -54,7 +54,6 @@ void ApplyParameterLocking(bundle::IRLSSolver& solver, double* data,
 
 namespace bundle {
 BundleAdjuster::BundleAdjuster() {
-  SetPointProjectionLossFunction("CauchyLoss", 1.0);
   SetRelativeMotionLossFunction("CauchyLoss", 1.0);
   focal_prior_sd_ = 1;
   aspect_ratio_prior_sd_ = 1;
@@ -392,12 +391,6 @@ void BundleAdjuster::SetGaugeFixShots(const std::string& shot_origin,
   Shot* shot = &shots_.at(shot_origin);
   shot->GetRigInstance()->SetParametersToOptimize({});
   gauge_fix_shots_.SetValue(std::make_pair(shot_origin, shot_scale));
-}
-
-void BundleAdjuster::SetPointProjectionLossFunction(std::string name,
-                                                    double threshold) {
-  point_projection_loss_name_ = name;
-  point_projection_loss_threshold_ = threshold;
 }
 
 void BundleAdjuster::SetRelativeMotionLossFunction(std::string name,
@@ -858,11 +851,7 @@ void BundleAdjuster::Run() {
   }
 
   // Add reprojection error blocks
-  ceres::LossFunction* projection_loss =
-      point_projection_observations_.empty()
-          ? nullptr
-          : CreateLossFunction(point_projection_loss_name_,
-                               point_projection_loss_threshold_);
+  ceres::LossFunction* projection_loss = nullptr;
 
   for (auto& observation : point_projection_observations_) {
     const auto projection_type =

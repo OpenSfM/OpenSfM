@@ -243,10 +243,6 @@ class OpenSfMConfig:
     ##################################
     # Params for bundle adjustment
     ##################################
-    # Loss function for the ceres problem (see: http://ceres-solver.org/modeling.html#lossfunction)
-    loss_function: str = "SoftLOneLoss"
-    # Threshold on the squared residuals.  Usually cost is quadratic for smaller residuals and sub-quadratic above.
-    loss_function_threshold: float = 1
     # The standard deviation of the reprojection error
     reprojection_error_sd: float = 0.004
     # The standard deviation of the exif focal length in log-scale
