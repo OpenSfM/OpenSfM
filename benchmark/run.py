@@ -18,6 +18,10 @@ Usage:
 
     # Compare against an explicit reference:
     python -m benchmark.run --config benchmark.json --commit abc1234 --reference /path/to/ref_run
+
+    # Re-generate the report only (no build/pipeline):
+    python -m benchmark.run --config benchmark.json --resume /path/to/run_dir --report-only
+    python -m benchmark.run --config benchmark.json --resume /path/to/run_dir --report-only --reference /path/to/ref_run
 """
 
 import argparse
@@ -134,6 +138,14 @@ def main() -> None:
         action="store_true",
         help="Enable verbose logging.",
     )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help=(
+            "Only with --resume.  Skip worktree/build/pipeline entirely and "
+            "regenerate the HTML comparison report from existing results."
+        ),
+    )
     args = parser.parse_args()
 
     # Protect this orchestrator process from the OOM killer — pipeline
@@ -145,6 +157,8 @@ def main() -> None:
         parser.error("--bootstrap requires --commit and --from-step")
     if args.from_step and args.resume and args.bootstrap:
         parser.error("--bootstrap is only used with --commit, not --resume")
+    if args.report_only and not args.resume:
+        parser.error("--report-only requires --resume")
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -211,76 +225,81 @@ def main() -> None:
         existing_meta = None
 
     # -----------------------------------------------------------------------
-    # Setup worktree, conda env, and build  (always needed — env was cleaned up)
+    # Setup worktree, conda env, build, and run pipeline
+    # (skipped entirely when --report-only is set)
     # -----------------------------------------------------------------------
-    worktree_path = setup_worktree(full_hash, repo_root)
-    conda_env = None
-    try:
-        conda_env = setup_conda_env(worktree_path, full_hash)
-        build_in_worktree(worktree_path, conda_env)
+    if args.report_only:
+        run_meta = existing_meta or load_run_meta(run_dir) or {}
+        logger.info("Report-only mode — skipping build and pipeline.")
+    else:
+        worktree_path = setup_worktree(full_hash, repo_root)
+        conda_env = None
+        try:
+            conda_env = setup_conda_env(worktree_path, full_hash)
+            build_in_worktree(worktree_path, conda_env)
 
-        # Dataset setup: idempotent — skips datasets that already have image_list.txt
-        for dataset_name, config_name in config.datasets.items():
-            target_dir = os.path.join(run_dir, dataset_name)
-            source_dir = os.path.join(config.root, dataset_name)
-            config_file = os.path.join(
-                config.configs_dir, f"{config_name}.yaml")
-            setup_dataset(source_dir, target_dir, config_file)
-            logger.info("Dataset prepared: %s (config: %s)",
-                        dataset_name, config_name)
+            # Dataset setup: idempotent — also fixes NAS permissions on re-run
+            for dataset_name, config_name in config.datasets.items():
+                target_dir = os.path.join(run_dir, dataset_name)
+                source_dir = os.path.join(config.root, dataset_name)
+                config_file = os.path.join(
+                    config.configs_dir, f"{config_name}.yaml")
+                setup_dataset(source_dir, target_dir, config_file)
+                logger.info("Dataset prepared: %s (config: %s)",
+                            dataset_name, config_name)
 
-        # Write initial run_meta.json before pipeline starts (crash-safe)
-        if not is_resume:
-            initial_meta = {
-                "commit": full_hash,
-                "date": datetime.now(timezone.utc).isoformat(),
-                "status": "in_progress",
-                "config": {
-                    "root": config.root,
-                    "datasets": config.datasets,
-                    "output_dir": config.output_dir,
-                },
-                "datasets": {},
-            }
-            save_run_meta(initial_meta, run_dir)
-            existing_meta = initial_meta
+            # Write initial run_meta.json before pipeline starts (crash-safe)
+            if not is_resume:
+                initial_meta = {
+                    "commit": full_hash,
+                    "date": datetime.now(timezone.utc).isoformat(),
+                    "status": "in_progress",
+                    "config": {
+                        "root": config.root,
+                        "datasets": config.datasets,
+                        "output_dir": config.output_dir,
+                    },
+                    "datasets": {},
+                }
+                save_run_meta(initial_meta, run_dir)
+                existing_meta = initial_meta
 
-        opensfm_bin = os.path.join(worktree_path, "bin", "opensfm")
+            opensfm_bin = os.path.join(worktree_path, "bin", "opensfm")
 
-        # Resolve bootstrap source for --commit --from-step
-        bootstrap_run_dir: Optional[str] = None
-        if args.from_step and not is_resume:
-            if args.bootstrap:
-                bootstrap_run_dir = os.path.abspath(args.bootstrap)
-                if not os.path.isdir(bootstrap_run_dir):
-                    raise ValueError(
-                        f"Bootstrap directory does not exist: {bootstrap_run_dir}")
-            else:
-                bootstrap_run_dir = _find_bootstrap_run(
-                    config.output_dir, full_hash)
-                if bootstrap_run_dir:
-                    logger.info("Auto-detected bootstrap source: %s",
-                                bootstrap_run_dir)
+            # Resolve bootstrap source for --commit --from-step
+            bootstrap_run_dir: Optional[str] = None
+            if args.from_step and not is_resume:
+                if args.bootstrap:
+                    bootstrap_run_dir = os.path.abspath(args.bootstrap)
+                    if not os.path.isdir(bootstrap_run_dir):
+                        raise ValueError(
+                            f"Bootstrap directory does not exist: {bootstrap_run_dir}")
                 else:
-                    logger.warning(
-                        "No complete previous run found for commit %s to bootstrap from. "
-                        "Steps before '%s' will be run from scratch.",
-                        short_hash, args.from_step,
-                    )
+                    bootstrap_run_dir = _find_bootstrap_run(
+                        config.output_dir, full_hash)
+                    if bootstrap_run_dir:
+                        logger.info("Auto-detected bootstrap source: %s",
+                                    bootstrap_run_dir)
+                    else:
+                        logger.warning(
+                            "No complete previous run found for commit %s to bootstrap from. "
+                            "Steps before '%s' will be run from scratch.",
+                            short_hash, args.from_step,
+                        )
 
-        run_meta = run_all_datasets(
-            opensfm_bin,
-            run_dir,
-            config,
-            full_hash,
-            conda_env,
-            resume=is_resume,
-            from_step=args.from_step,
-            existing_meta=existing_meta,
-            bootstrap_run_dir=bootstrap_run_dir,
-        )
-    finally:
-        cleanup_worktree(worktree_path, repo_root, conda_env)
+            run_meta = run_all_datasets(
+                opensfm_bin,
+                run_dir,
+                config,
+                full_hash,
+                conda_env,
+                resume=is_resume,
+                from_step=args.from_step,
+                existing_meta=existing_meta,
+                bootstrap_run_dir=bootstrap_run_dir,
+            )
+        finally:
+            cleanup_worktree(worktree_path, repo_root, conda_env)
 
     # -----------------------------------------------------------------------
     # HTML comparison report

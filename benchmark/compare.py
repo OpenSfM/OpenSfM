@@ -242,9 +242,11 @@ tr.ref-row td { background: #f8f8f8; }
 tr.cur-row td { background: #fff; }
 .better { color: #1a7f37; font-weight: bold; }
 .worse  { color: #cf222e; font-weight: bold; }
+.failed { color: #cf222e; font-weight: bold; font-style: italic; }
 a { color: #0969da; text-decoration: none; }
 a:hover { text-decoration: underline; }
 .dataset-header td { background: #e8e8e8; font-weight: bold; }
+.dataset-header-failed td { background: #fdd; font-weight: bold; }
 """
 
 
@@ -255,21 +257,13 @@ def _render_metric_table(
     current_stats: Dict[str, Any],
     reference_stats: Optional[Dict[str, Any]],
     run_dir: str,
+    current_meta: Optional[Dict[str, Any]] = None,
+    reference_meta: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Render one comparison table section."""
-    # Check if any dataset has data for these metrics
-    has_data = False
-    for ds in datasets:
-        cs = current_stats.get(ds)
-        for _, path, _ in metrics:
-            if _get_nested(cs, path) is not None:
-                has_data = True
-                break
-        if has_data:
-            break
-    if not has_data:
-        return ""
+    """Render one comparison table section.
 
+    Datasets that failed (no stats) are shown with a FAILED banner.
+    """
     has_ref = reference_stats is not None
 
     lines = [f"<h2>{escape(title)}</h2>", "<table>",
@@ -283,31 +277,63 @@ def _render_metric_table(
         rs = reference_stats.get(ds) if reference_stats else None
         report_link = f"{ds}/stats/report.pdf"
 
-        # Dataset header spanning all columns
+        # Determine per-dataset success from run_meta
+        cur_ds_meta = (current_meta or {}).get("datasets", {}).get(ds, {})
+        cur_failed = cs is None or cur_ds_meta.get("success") is False
+        ref_ds_meta = (reference_meta or {}).get("datasets", {}).get(ds, {})
+        ref_failed = has_ref and (
+            rs is None or ref_ds_meta.get("success") is False)
+
+        # Failed step info
+        cur_failed_step = cur_ds_meta.get("failed_step", "")
+        ref_failed_step = ref_ds_meta.get("failed_step", "")
+
+        # Dataset header
         colspan = len(metrics) + 2
+        header_cls = "dataset-header-failed" if cur_failed else "dataset-header"
+        ds_label = escape(ds)
+        if cur_failed:
+            ds_label += ' <span class="failed">FAILED'
+            if cur_failed_step:
+                ds_label += f" at {escape(cur_failed_step)}"
+            ds_label += "</span>"
         lines.append(
-            f'<tr class="dataset-header"><td colspan="{colspan}">'
-            f'<a href="{escape(report_link)}">{escape(ds)}</a></td></tr>'
+            f'<tr class="{header_cls}"><td colspan="{colspan}">'
+            f'<a href="{escape(report_link)}">{ds_label}</a></td></tr>'
         )
 
         if has_ref:
             # Reference row
             lines.append(
                 '<tr class="ref-row"><td></td><td class="label-cell">reference</td>')
-            for _, path, _ in metrics:
-                val = _get_nested(rs, path)
-                lines.append(f"<td>{_fmt(val)}</td>")
+            if ref_failed:
+                fail_text = "FAILED"
+                if ref_failed_step:
+                    fail_text += f" at {escape(ref_failed_step)}"
+                lines.append(
+                    f'<td colspan="{len(metrics)}" class="failed">{fail_text}</td>')
+            else:
+                for _, path, _ in metrics:
+                    val = _get_nested(rs, path)
+                    lines.append(f"<td>{_fmt(val)}</td>")
             lines.append("</tr>")
 
         # Current row
         lines.append(
             '<tr class="cur-row"><td></td><td class="label-cell">current</td>')
-        for _, path, lower_is_better in metrics:
-            cur_val = _get_nested(cs, path)
-            ref_val = _get_nested(rs, path) if rs else None
-            cls = _diff_class(cur_val, ref_val, lower_is_better)
-            cls_attr = f' class="{cls}"' if cls else ""
-            lines.append(f"<td{cls_attr}>{_fmt(cur_val)}</td>")
+        if cur_failed and cs is None:
+            fail_text = "FAILED"
+            if cur_failed_step:
+                fail_text += f" at {escape(cur_failed_step)}"
+            lines.append(
+                f'<td colspan="{len(metrics)}" class="failed">{fail_text}</td>')
+        else:
+            for _, path, lower_is_better in metrics:
+                cur_val = _get_nested(cs, path)
+                ref_val = _get_nested(rs, path) if rs else None
+                cls = _diff_class(cur_val, ref_val, lower_is_better)
+                cls_attr = f' class="{cls}"' if cls else ""
+                lines.append(f"<td{cls_attr}>{_fmt(cur_val)}</td>")
         lines.append("</tr>")
 
     lines.append("</table>")
@@ -322,7 +348,10 @@ def generate_comparison_html(
     run_dir: str,
 ) -> str:
     """Generate comparison.html and return the output path."""
-    datasets = current_meta.get("config", {}).get("datasets", [])
+    raw_datasets = current_meta.get("config", {}).get("datasets", [])
+    # datasets may be a dict (name -> config_name) or a list
+    datasets: List[str] = list(raw_datasets.keys()) if isinstance(
+        raw_datasets, dict) else list(raw_datasets)
 
     cur_commit = current_meta.get("commit", "unknown")[:8]
     cur_date = current_meta.get("date", "unknown")
@@ -351,7 +380,8 @@ def generate_comparison_html(
     tables_html = ""
     for title, metrics in sections:
         tables_html += _render_metric_table(
-            title, metrics, datasets, current_stats, reference_stats, run_dir
+            title, metrics, datasets, current_stats, reference_stats, run_dir,
+            current_meta=current_meta, reference_meta=reference_meta,
         )
 
     html = f"""\
