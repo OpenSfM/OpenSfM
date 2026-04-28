@@ -278,7 +278,7 @@ class OpenSfMConfig:
     # Annealing schedule for GCP weights: list of multipliers applied to gcp_global_weight
     # across successive bundle passes. Set to [1.0] to disable annealing (single pass).
     gcp_annealing_steps: List[float] = field(
-        default_factory=lambda: [1.0, 10.0, 100.0]
+        default_factory=lambda: [5.0, 25.0]
     )
     # The standard deviation of the rig translation
     rig_translation_sd: float = 0.1
