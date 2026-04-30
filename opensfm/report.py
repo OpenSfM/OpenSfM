@@ -355,7 +355,7 @@ class Report:
 
         heatmap_height = 60
         heatmaps = [
-            f for f in self.io_handler.ls(self.output_path) if f.startswith("heatmap")
+            f for f in self.io_handler.ls(self.output_path) if f.startswith("heatmap") and f.endswith(".png")
         ]
         self._make_centered_image(
             os.path.join(self.output_path, heatmaps[0]), heatmap_height
@@ -416,10 +416,11 @@ class Report:
         self._make_section("Camera Models Details")
 
         for camera, params in self.stats["camera_errors"].items():
+            string_id = "residuals_" + str(camera.replace("/", "_"))
             residual_grids = [
                 f
                 for f in self.io_handler.ls(self.output_path)
-                if f.startswith("residuals_" + str(camera.replace("/", "_")))
+                if f.startswith(string_id) and f.endswith(".png")
             ]
             if not residual_grids:
                 continue
@@ -495,7 +496,7 @@ class Report:
         matchgraph = [
             f
             for f in self.io_handler.ls(self.output_path)
-            if f.startswith("matchgraph")
+            if f.startswith("matchgraph") and f.endswith(".png")
         ]
         self._make_centered_image(
             os.path.join(self.output_path, matchgraph[0]), matchgraph_height

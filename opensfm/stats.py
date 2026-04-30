@@ -221,6 +221,86 @@ def _projection_error(
     )
 
 
+def _compute_gsd(
+    reconstruction: types.Reconstruction,
+    tracks_manager: pymap.TracksManager,
+    num_shots: int = 100,
+    num_pairs: int = 2000,
+) -> float:
+    """Estimate Ground Sampling Distance (GSD) for a single reconstruction.
+
+    Samples *num_pairs* pairs of reconstructed points per shot across up to
+    *num_shots* randomly chosen shots, and averages the ratio
+        (3-D Euclidean distance) / (2-D pixel distance)
+    over all sampled pairs.  Returns -1.0 when no valid pair is found.
+    """
+    all_ratios: List[float] = []
+
+    shot_ids = list(reconstruction.shots.keys())
+    if len(shot_ids) > num_shots:
+        shot_ids = random.sample(shot_ids, num_shots)
+
+    all_points = reconstruction.points
+    tm_shot_ids = set(tracks_manager.get_shot_ids())
+
+    for shot_id in shot_ids:
+        if shot_id not in tm_shot_ids:
+            continue
+
+        shot = reconstruction.shots[shot_id]
+        w = shot.camera.width
+        h = shot.camera.height
+        normalizer = max(w, h)
+        center = np.array([w / 2.0, h / 2.0])
+
+        obs_dict = tracks_manager.get_shot_observations(shot_id)
+
+        # Keep only observations whose point is in the reconstruction.
+        valid_obs: List[Tuple[str, pymap.Observation]] = [
+            (pid, obs) for pid, obs in obs_dict.items() if pid in all_points
+        ]
+        if len(valid_obs) < 2:
+            continue
+
+        n_valid = len(valid_obs)
+        n_possible = n_valid * (n_valid - 1) // 2
+
+        if n_possible <= num_pairs:
+            pairs = [(i, j) for i in range(n_valid)
+                     for j in range(i + 1, n_valid)]
+        else:
+            pairs_set: set[Tuple[int, int]] = set()
+            while len(pairs_set) < num_pairs:
+                a = random.randint(0, n_valid - 1)
+                b = random.randint(0, n_valid - 1)
+                if a != b:
+                    pairs_set.add((min(a, b), max(a, b)))
+            pairs = list(pairs_set)
+
+        for i, j in pairs:
+            pid_a, obs_a = valid_obs[i]
+            pid_b, obs_b = valid_obs[j]
+
+            # 3-D Euclidean distance between the two reconstructed points.
+            dist_3d = float(
+                np.linalg.norm(
+                    all_points[pid_a].coordinates -
+                    all_points[pid_b].coordinates
+                )
+            )
+
+            # 2-D pixel distance between the two observations.
+            px_a = obs_a.point * normalizer + center
+            px_b = obs_b.point * normalizer + center
+            dist_2d = float(np.linalg.norm(px_a - px_b))
+
+            if dist_2d > 1.0:
+                all_ratios.append(dist_3d / dist_2d)
+
+    if not all_ratios:
+        return -1.0
+
+    return float(np.mean(all_ratios))
 def reconstruction_statistics(
     data: DataSetBase,
     tracks_manager: pymap.TracksManager,
@@ -300,6 +380,13 @@ def reconstruction_statistics(
         list(map(float, hist_angular)),
         list(map(float, bins_angular)),
     )
+
+    # Ground Sampling Distance (average across all reconstruction components).
+    gsd_values = [
+        _compute_gsd(rec, tracks_manager) for rec in reconstructions
+    ]
+    valid_gsds = [g for g in gsd_values if g > 0]
+    stats["gsd"] = float(np.mean(valid_gsds)) if valid_gsds else -1.0
 
     return stats
 
@@ -543,10 +630,26 @@ def save_matchgraph(
     lowest = np.percentile(list(all_values), 5)
     highest = np.percentile(list(all_values), 95)
 
+    min_matches: int = 2 * data.config["resection_min_inliers"]
+    edges_json: List[Dict[str, Any]] = []
+    for (node1, node2), edge in connectivity.items():
+        if edge < min_matches:
+            continue
+        comp1 = shot_component.get(node1)
+        comp2 = shot_component.get(node2)
+        if comp1 is None or comp2 is None or comp1 != comp2:
+            continue
+        edges_json.append(
+            {"shot1": node1, "shot2": node2, "matches": int(edge)})
+
+    matchgraph_data: Dict[str, Any] = {"edges": edges_json}
+    with io_handler.open_wt(os.path.join(output_path, "matchgraph.json")) as fjson:
+        io.json_dump(matchgraph_data, fjson)
+
     plt.clf()
     cmap = cm.viridis
     for (node1, node2), edge in sorted(connectivity.items(), key=lambda x: x[1]):
-        if edge < 2 * data.config["resection_min_inliers"]:
+        if edge < min_matches:
             continue
         comp1 = shot_component[node1]
         comp2 = shot_component[node2]
@@ -895,6 +998,13 @@ def save_heatmap(
             fontsize="x-small",
         )
 
+        with io_handler.open_wb(
+            os.path.join(
+                output_path, "heatmap_" +
+                str(camera_id.replace("/", "_")) + ".npy"
+            )
+        ) as fwb:
+            np.save(fwb, camera_heatmap)
     with io_handler.open_wb(
         os.path.join(
             output_path, "heatmap_" + str(camera_id.replace("/", "_")) + ".png"
@@ -1026,6 +1136,14 @@ def save_residual_grids(
         plt.yticks(
             [0, buckets_y / 2, buckets_y], [0, int(h / 2), h], fontsize="x-small"
         )
+
+        with io_handler.open_wb(
+            os.path.join(
+                output_path, "residuals_" +
+                str(camera_id.replace("/", "_")) + ".npy"
+            )
+        ) as fwb:
+            np.save(fwb, camera_array_res)
 
         with io_handler.open_wb(
             os.path.join(
