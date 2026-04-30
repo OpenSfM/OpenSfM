@@ -32,6 +32,7 @@ using ObservationIndex = size_t;
 constexpr ObservationIndex INVALID_OBSERVATION_INDEX =
     static_cast<ObservationIndex>(-1);
 }  // namespace map
+
 template <class T>
 using AlignedVector = std::vector<T, Eigen::aligned_allocator<T>>;
 using DescriptorType = Eigen::Matrix<uint8_t, 1, 32, Eigen::RowMajor>;

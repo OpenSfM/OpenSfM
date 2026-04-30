@@ -21,6 +21,7 @@ add_library(map ${MAP_FILES})
 target_link_libraries(map
   PUBLIC
     Eigen3::Eigen
+    absl::flat_hash_map
   PRIVATE
     geo
     geometry

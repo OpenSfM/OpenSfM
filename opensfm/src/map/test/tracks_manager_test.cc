@@ -2,16 +2,45 @@
 #include <gtest/gtest.h>
 #include <map/tracks_manager.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <io.h>      // _mktemp_s
+#include <windows.h> // GetTempPathA
+#else
+#include <unistd.h>  // mkstemp
+#endif
+
 namespace {
 
 class TempFile {
  public:
   TempFile() {
+#ifdef _WIN32
+    char tmpDir[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmpDir);
+    char filenameTmp[MAX_PATH];
+    snprintf(filenameTmp, MAX_PATH, "%sopensfm_tracks_XXXXXX", tmpDir);
+    if (_mktemp_s(filenameTmp, strlen(filenameTmp) + 1) != 0) {
+      throw std::runtime_error("Could not create temporary file");
+    }
+    // Create the file so it exists
+    FILE* f = fopen(filenameTmp, "w");
+    if (!f) {
+      throw std::runtime_error("Could not create temporary file");
+    }
+    fclose(f);
+#else
     char filenameTmp[] = "/tmp/opensfm_tracks_manager_test_XXXXXX";
     int fd = mkstemp(filenameTmp);
     if (fd == -1) {
-      std::runtime_error("Could not create temporary file");
+      throw std::runtime_error("Could not create temporary file");
     }
+    close(fd);
+#endif
     filename = std::string(filenameTmp);
   }
 

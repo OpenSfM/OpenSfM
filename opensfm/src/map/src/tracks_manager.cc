@@ -1,9 +1,13 @@
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+#include <fast_float/fast_float.h>
 #include <foundation/types.h>
 #include <foundation/union_find.h>
 #include <map/tracks_manager.h>
 
 #include <algorithm>
-#include <iostream>
+#include <charconv>
+#include <csv2/csv2.hpp>
 #include <numeric>
 #include <optional>
 #include <sstream>
@@ -11,21 +15,119 @@
 
 namespace {
 
-template <class S>
-int GetTracksFileVersion(S& fstream) {
-  const auto current_position = fstream.tellg();
+// csv2 Reader configured for tab-separated values, no header row, trim \r.
+using CsvReader =
+    csv2::Reader<csv2::delimiter<'\t'>, csv2::quote_character<'"'>,
+                 csv2::first_row_is_header<false>,
+                 csv2::trim_policy::trim_characters<'\r'>>;
 
-  std::string line;
-  std::getline(fstream, line);
+static int svToInt(std::string_view sv) {
+  int val = 0;
+  std::from_chars(sv.data(), sv.data() + sv.size(), val);
+  return val;
+}
 
-  int version = 0;
-  if (line.find(map::TracksManager::TRACKS_HEADER) == 0) {
-    version = std::atoi(
-        line.substr(map::TracksManager::TRACKS_HEADER.length() + 2).c_str());
-  } else {
-    fstream.seekg(current_position);
+static double svToDouble(std::string_view sv) {
+  double val = 0.0;
+  fast_float::from_chars(sv.data(), sv.data() + sv.size(), val);
+  return val;
+}
+
+// Detect the tracks-file version from the first line of raw data.
+// Returns {version, byte_offset_past_header}.  For V0 files (no header)
+// both are 0 — meaning the entire buffer is data.
+static std::pair<int, size_t> DetectVersion(const char* data, size_t size) {
+  size_t lineEnd = 0;
+  while (lineEnd < size && data[lineEnd] != '\n') {
+    ++lineEnd;
   }
-  return version;
+
+  std::string_view firstLine(data, lineEnd);
+  if (!firstLine.empty() && firstLine.back() == '\r') {
+    firstLine.remove_suffix(1);
+  }
+
+  if (firstLine.find(map::TracksManager::TRACKS_HEADER) == 0) {
+    auto vStr =
+        firstLine.substr(map::TracksManager::TRACKS_HEADER.length() + 2);
+    int version = 0;
+    std::from_chars(vStr.data(), vStr.data() + vStr.size(), version);
+    const size_t offset = (lineEnd < size) ? lineEnd + 1 : size;
+    return {version, offset};
+  }
+  return {0, 0};
+}
+
+map::Observation InstanciateObservation(
+    double x, double y, double scale, int id, int r, int g, int b,
+    int segm = map::Observation::NO_SEMANTIC_VALUE,
+    int inst = map::Observation::NO_SEMANTIC_VALUE) {
+  map::Observation observation;
+  observation.point << x, y;
+  observation.scale = scale;
+  observation.feature_id = id;
+  observation.color << r, g, b;
+  observation.segmentation_id = segm;
+  observation.instance_id = inst;
+  return observation;
+}
+
+// Parse the body of a tracks file (after version header) into a
+// TracksManager.  The expected number of columns is determined by |version|.
+static map::TracksManager ParseTracksBuffer(const char* data, size_t size,
+                                            int version) {
+  map::TracksManager manager;
+  CsvReader reader;
+  reader.parse_view(std::string_view(data, size));
+
+  const int expectedCols = (version == 0) ? 8 : (version == 1) ? 9 : 11;
+
+  for (const auto& row : reader) {
+    std::string_view cells[11];
+    int n = 0;
+    for (const auto& cell : row) {
+      if (n < 11) {
+        cells[n] = cell.read_view();
+      }
+      ++n;
+    }
+
+    // Skip empty trailing lines (e.g. from a final newline).
+    if (n == 0 || (n == 1 && cells[0].empty())) {
+      continue;
+    }
+    if (n != expectedCols) {
+      throw std::runtime_error(
+          "Encountered invalid line. A line must contain exactly " +
+          std::to_string(expectedCols) + " values!");
+    }
+
+    const std::string_view image = cells[0];
+    const std::string_view trackID = cells[1];
+    const int featureID = svToInt(cells[2]);
+    const double x = svToDouble(cells[3]);
+    const double y = svToDouble(cells[4]);
+
+    map::Observation obs;
+    if (version == 0) {
+      obs = InstanciateObservation(x, y, 0.0, featureID, svToInt(cells[5]),
+                                   svToInt(cells[6]), svToInt(cells[7]));
+    } else if (version == 1) {
+      obs = InstanciateObservation(x, y, svToDouble(cells[5]), featureID,
+                                   svToInt(cells[6]), svToInt(cells[7]),
+                                   svToInt(cells[8]));
+    } else {
+      obs = InstanciateObservation(x, y, svToDouble(cells[5]), featureID,
+                                   svToInt(cells[6]), svToInt(cells[7]),
+                                   svToInt(cells[8]), svToInt(cells[9]),
+                                   svToInt(cells[10]));
+    }
+
+    manager.AddObservationUnchecked(image, trackID, obs);
+  }
+
+  manager.BuildAdjacency();
+  return manager;
 }
 
 template <class S>
@@ -47,139 +149,6 @@ void WriteToStreamCurrentVersion(S& ostream,
               << observation.second.segmentation_id << "\t"
               << observation.second.instance_id << std::endl;
     }
-  }
-}
-
-map::Observation InstanciateObservation(
-    double x, double y, double scale, int id, int r, int g, int b,
-    int segm = map::Observation::NO_SEMANTIC_VALUE,
-    int inst = map::Observation::NO_SEMANTIC_VALUE) {
-  map::Observation observation;
-  observation.point << x, y;
-  observation.scale = scale;
-  observation.feature_id = id;
-  observation.color << r, g, b;
-  observation.segmentation_id = segm;
-  observation.instance_id = inst;
-  return observation;
-}
-
-void SeparateLineByTabs(const std::string& line,
-                        std::vector<std::string>& elems) {
-  elems.clear();
-  std::stringstream stst(line);
-  std::string elem;
-  while (std::getline(stst, elem, '\t'))  // separate by tabs
-  {
-    elems.push_back(elem);
-  }
-}
-
-template <class S>
-map::TracksManager InstanciateFromStreamV0(S& fstream) {
-  map::TracksManager manager;
-  std::string line;
-  std::vector<std::string> elems;
-  constexpr auto N_ENTRIES{8};
-  elems.reserve(N_ENTRIES);
-  while (std::getline(fstream, line)) {
-    SeparateLineByTabs(line, elems);
-    if (elems.size() != N_ENTRIES)  // process only valid lines
-    {
-      throw std::runtime_error(
-          "Encountered invalid line. A line must contain exactly " +
-          std::to_string(N_ENTRIES) + " values!");
-    }
-    const map::ShotId image = elems[0];
-    const map::TrackId trackID = elems[1];
-    const int featureID = std::stoi(elems[2]);
-    const double x = std::stod(elems[3]);
-    const double y = std::stod(elems[4]);
-    const double scale = 0.0;
-    const int r = std::stoi(elems[5]);
-    const int g = std::stoi(elems[6]);
-    const int b = std::stoi(elems[7]);
-    auto observation = InstanciateObservation(x, y, scale, featureID, r, g, b);
-    manager.AddObservation(image, trackID, observation);
-  }
-  return manager;
-}
-
-template <class S>
-map::TracksManager InstanciateFromStreamV1(S& fstream) {
-  map::TracksManager manager;
-  std::string line;
-  std::vector<std::string> elems;
-  constexpr auto N_ENTRIES{9};
-  elems.reserve(N_ENTRIES);
-  while (std::getline(fstream, line)) {
-    SeparateLineByTabs(line, elems);
-    if (elems.size() != N_ENTRIES)  // process only valid lines
-    {
-      throw std::runtime_error(
-          "Encountered invalid line. A line must contain exactly " +
-          std::to_string(N_ENTRIES) + " values!");
-    }
-    const map::ShotId image = elems[0];
-    const map::TrackId trackID = elems[1];
-    const int featureID = std::stoi(elems[2]);
-    const double x = std::stod(elems[3]);
-    const double y = std::stod(elems[4]);
-    const double scale = std::stod(elems[5]);
-    const int r = std::stoi(elems[6]);
-    const int g = std::stoi(elems[7]);
-    const int b = std::stoi(elems[8]);
-    auto observation = InstanciateObservation(x, y, scale, featureID, r, g, b);
-    manager.AddObservation(image, trackID, observation);
-  }
-  return manager;
-}
-
-template <class S>
-map::TracksManager InstanciateFromStreamV2(S& fstream) {
-  map::TracksManager manager;
-  std::string line;
-  std::vector<std::string> elems;
-  constexpr auto N_ENTRIES{11};
-  elems.reserve(N_ENTRIES);
-  while (std::getline(fstream, line)) {
-    SeparateLineByTabs(line, elems);
-    if (elems.size() != N_ENTRIES)  // process only valid lines
-    {
-      throw std::runtime_error(
-          "Encountered invalid line. A line must contain exactly " +
-          std::to_string(N_ENTRIES) + " values!");
-    }
-    const map::ShotId image = elems[0];
-    const map::TrackId trackID = elems[1];
-    const int featureID = std::stoi(elems[2]);
-    const double x = std::stod(elems[3]);
-    const double y = std::stod(elems[4]);
-    const double scale = std::stod(elems[5]);
-    const int r = std::stoi(elems[6]);
-    const int g = std::stoi(elems[7]);
-    const int b = std::stoi(elems[8]);
-    const int segm = std::stoi(elems[9]);
-    const int inst = std::stoi(elems[10]);
-    auto observation =
-        InstanciateObservation(x, y, scale, featureID, r, g, b, segm, inst);
-    manager.AddObservation(image, trackID, observation);
-  }
-  return manager;
-}
-
-template <class S>
-map::TracksManager InstanciateFromStreamT(S& fstream) {
-  const auto version = GetTracksFileVersion(fstream);
-  switch (version) {
-    case 0:
-      return InstanciateFromStreamV0(fstream);
-    case 1:
-      return InstanciateFromStreamV1(fstream);
-    case 2:
-      return InstanciateFromStreamV2(fstream);
-    default:
-      throw std::runtime_error("Unknown tracks manager file version");
   }
 }
 
@@ -215,6 +184,20 @@ TracksManager::StringId TracksManager::GetOrInsertShotIndex(const ShotId& id) {
   return idx;
 }
 
+TracksManager::StringId TracksManager::GetOrInsertShotIndex(
+    std::string_view id) {
+  // Heterogeneous lookup — no std::string constructed for existing keys.
+  const auto it = shot_id_to_index_.find(id);
+  if (it != shot_id_to_index_.end()) {
+    return it->second;
+  }
+  // New entry — construct string only now.
+  const StringId idx = shot_ids_.size();
+  shot_ids_.emplace_back(id);
+  shot_id_to_index_[shot_ids_.back()] = idx;
+  tracks_per_shot_.emplace_back();
+  return idx;
+}
 TracksManager::StringId TracksManager::GetOrInsertTrackIndex(
     const TrackId& id) {
   const auto it = track_id_to_index_.find(id);
@@ -228,9 +211,26 @@ TracksManager::StringId TracksManager::GetOrInsertTrackIndex(
   return idx;
 }
 
+TracksManager::StringId TracksManager::GetOrInsertTrackIndex(
+    std::string_view id) {
+  // Heterogeneous lookup — no std::string constructed for existing keys.
+  const auto it = track_id_to_index_.find(id);
+  if (it != track_id_to_index_.end()) {
+    return it->second;
+  }
+  // New entry — construct string only now.
+  const StringId idx = track_ids_.size();
+  track_ids_.emplace_back(id);
+  track_id_to_index_[track_ids_.back()] = idx;
+  shots_per_track_.emplace_back();
+  return idx;
+}
 void TracksManager::AddObservation(const ShotId& shot_id,
                                    const TrackId& track_id,
                                    const Observation& observation) {
+  // Flush any pending bulk triples before direct adjacency access.
+  BuildAdjacency();
+
   const StringId shot_idx = GetOrInsertShotIndex(shot_id);
   const StringId track_idx = GetOrInsertTrackIndex(track_id);
 
@@ -248,6 +248,61 @@ void TracksManager::AddObservation(const ShotId& shot_id,
   shots_per_track_[track_idx].emplace(shot_idx, obs_idx);
 }
 
+void TracksManager::AddObservationUnchecked(std::string_view shot_id,
+                                            std::string_view track_id,
+                                            const Observation& observation) {
+  // Fast path: cache the last shot_id since rows are grouped by shot.
+  StringId shot_idx;
+  if (shot_id == last_shot_cached_) {
+    shot_idx = last_shot_idx_;
+  } else {
+    shot_idx = GetOrInsertShotIndex(shot_id);  // string_view overload
+    last_shot_cached_ = shot_id;
+    last_shot_idx_ = shot_idx;
+  }
+  const StringId track_idx =
+      GetOrInsertTrackIndex(track_id);  // string_view overload
+
+  ObservationIndex obs_idx = pool_->Add(observation);
+
+  // Defer adjacency map insertion — just accumulate triples.
+  pending_bulk_.push_back({shot_idx, track_idx, obs_idx});
+  adjacency_built_ = false;
+}
+
+void TracksManager::BuildAdjacency() {
+  if (adjacency_built_) {
+    return;
+  }
+
+  // Size the outer vectors to match current shot/track counts.
+  tracks_per_shot_.resize(shot_ids_.size());
+  shots_per_track_.resize(track_ids_.size());
+
+  // Pre-count entries per shot and per track so we can reserve inner maps.
+  std::vector<size_t> counts_per_shot(shot_ids_.size(), 0);
+  std::vector<size_t> counts_per_track(track_ids_.size(), 0);
+  for (const auto& t : pending_bulk_) {
+    ++counts_per_shot[t.shot_idx];
+    ++counts_per_track[t.track_idx];
+  }
+  for (size_t i = 0; i < shot_ids_.size(); ++i) {
+    tracks_per_shot_[i].reserve(counts_per_shot[i]);
+  }
+  for (size_t i = 0; i < track_ids_.size(); ++i) {
+    shots_per_track_[i].reserve(counts_per_track[i]);
+  }
+
+  // Flush all triples into the adjacency maps.
+  for (const auto& t : pending_bulk_) {
+    tracks_per_shot_[t.shot_idx].emplace(t.track_idx, t.obs_idx);
+    shots_per_track_[t.track_idx].emplace(t.shot_idx, t.obs_idx);
+  }
+
+  pending_bulk_.clear();
+  pending_bulk_.shrink_to_fit();
+  adjacency_built_ = true;
+}
 int TracksManager::NumShots() const { return shot_ids_.size(); }
 
 int TracksManager::NumTracks() const { return track_ids_.size(); }
@@ -374,7 +429,8 @@ TracksManager::GetTrackObservationIndices(const TrackId& track) const {
 TracksManager TracksManager::ConstructSubTracksManager(
     const std::vector<TrackId>& tracks,
     const std::vector<ShotId>& shots) const {
-  std::unordered_set<StringId> allowed_shot_indices;
+  absl::flat_hash_set<StringId> allowed_shot_indices;
+  allowed_shot_indices.reserve(shots.size());
   for (const auto& id : shots) {
     const auto it = shot_id_to_index_.find(id);
     if (it != shot_id_to_index_.end()) {
@@ -393,8 +449,8 @@ TracksManager TracksManager::ConstructSubTracksManager(
     const auto& track_shots = shots_per_track_[track_idx];
     for (const auto& [shot_idx, obs_idx] : track_shots) {
       if (allowed_shot_indices.count(shot_idx)) {
-        subset.AddObservation(shot_ids_[shot_idx], track_id,
-                              pool_->Get(obs_idx));
+        subset.AddObservationUnchecked(shot_ids_[shot_idx], track_id,
+                                       pool_->Get(obs_idx));
         // Carry depth priors into the subset
         const auto depth_it = depth_priors_.find(obs_idx);
         if (depth_it != depth_priors_.end()) {
@@ -403,7 +459,50 @@ TracksManager TracksManager::ConstructSubTracksManager(
       }
     }
   }
+  subset.BuildAdjacency();
   return subset;
+}
+
+TracksManager TracksManager::ConstructSubTracksManagerByExclusion(
+    const std::vector<ShotId>& shots_to_exclude,
+    const std::vector<TrackId>& tracks_to_exclude) const {
+  // Build internal-index exclusion sets for fast O(1) integer lookups.
+  absl::flat_hash_set<StringId> excl_shots;
+  excl_shots.reserve(shots_to_exclude.size());
+  for (const auto& id : shots_to_exclude) {
+    const auto it = shot_id_to_index_.find(id);
+    if (it != shot_id_to_index_.end()) {
+      excl_shots.insert(it->second);
+    }
+  }
+
+  absl::flat_hash_set<StringId> excl_tracks;
+  excl_tracks.reserve(tracks_to_exclude.size());
+  for (const auto& id : tracks_to_exclude) {
+    const auto it = track_id_to_index_.find(id);
+    if (it != track_id_to_index_.end()) {
+      excl_tracks.insert(it->second);
+    }
+  }
+
+  // Iterate by shot so the last-shot cache in AddObservationUnchecked
+  // hits on every call after the first per shot.
+  TracksManager result;
+  for (StringId shot_idx = 0; shot_idx < shot_ids_.size(); ++shot_idx) {
+    if (excl_shots.count(shot_idx)) {
+      continue;
+    }
+    const auto& shot_tracks = tracks_per_shot_[shot_idx];
+    for (const auto& [track_idx, obs_idx] : shot_tracks) {
+      if (excl_tracks.count(track_idx)) {
+        continue;
+      }
+      result.AddObservationUnchecked(shot_ids_[shot_idx], track_ids_[track_idx],
+                                     pool_->Get(obs_idx));
+    }
+  }
+  result.BuildAdjacency();
+  return result;
 }
 
 std::vector<TracksManager::KeyPointTuple>
@@ -510,7 +609,7 @@ TracksManager TracksManager::MergeTracksManager(
     const std::vector<const TracksManager*>& tracks_managers) {
   using FeatureId_2 = std::pair<ShotId, int>;
   using TrackRef = std::pair<int, StringId>;
-  std::unordered_map<FeatureId_2, std::vector<int>, HashPair>
+  absl::flat_hash_map<FeatureId_2, std::vector<int>, HashPair>
       observations_per_feature_id;
   std::vector<std::unique_ptr<UnionFindElement<TrackRef>>> union_find_elements;
 
@@ -578,12 +677,16 @@ TracksManager TracksManager::MergeTracksManager(
 }
 
 TracksManager TracksManager::InstanciateFromFile(const std::string& filename) {
-  std::ifstream istream(filename);
-  if (istream.is_open()) {
-    return InstanciateFromStreamT(istream);
-  } else {
+  std::error_code ec;
+  mio::mmap_source mmap;
+  mmap.map(filename, ec);
+  if (ec) {
     throw std::runtime_error("Can't read tracks manager file");
   }
+  const char* data = mmap.data();
+  const size_t size = mmap.length();
+  const auto [version, offset] = DetectVersion(data, size);
+  return ParseTracksBuffer(data + offset, size - offset, version);
 }
 
 void TracksManager::WriteToFile(const std::string& filename) const {
@@ -596,8 +699,8 @@ void TracksManager::WriteToFile(const std::string& filename) const {
 }
 
 TracksManager TracksManager::InstanciateFromString(const std::string& str) {
-  std::stringstream sstream(str);
-  return InstanciateFromStreamT(sstream);
+  const auto [version, offset] = DetectVersion(str.data(), str.size());
+  return ParseTracksBuffer(str.data() + offset, str.size() - offset, version);
 }
 
 std::string TracksManager::AsString() const {

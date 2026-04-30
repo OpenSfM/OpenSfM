@@ -3,7 +3,7 @@ dependencies:
     - python=3.10
     - cmake=3.31
     - make
-    - libxcrypt
+    - libxcrypt # [linux] [osx]
     - libopencv *=headless*
     - py-opencv
     - anaconda::metis
@@ -11,5 +11,6 @@ dependencies:
     - conda-forge::llvm-openmp
     - conda-forge::cxx-compiler
     - conda-forge::openblas
-    - conda-forge::gperftools
+    - conda-forge::gperftools # [linux]
     - conda-forge::ceres-solver=2.2
+    - conda-forge::fast_float

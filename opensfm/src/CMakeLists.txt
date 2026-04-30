@@ -63,6 +63,7 @@ endif()
 
 find_package(LAPACK)
 find_package(SuiteSparse)
+find_package(absl REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Ceres)
 find_package(Gflags REQUIRED)
@@ -125,6 +126,7 @@ add_subdirectory(third_party/akaze)
 add_subdirectory(third_party/vlfeat)
 
 include_directories(third_party/vlfeat)
+include_directories(third_party/csv2)
 
 ####### Debugging #######
 if (CMAKE_BUILD_TYPE MATCHES DEBUG)
