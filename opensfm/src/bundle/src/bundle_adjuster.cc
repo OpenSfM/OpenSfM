@@ -552,7 +552,7 @@ struct AddProjectionError {
               obs.camera->GetValue().GetProjectionType(), obs.coordinates,
               obs.std_deviation, is_rig_camera_useful));
     }
-    std::string group_id = "PROJ";
+    std::string group_id = "PROJ_" + obs.shot->GetID();
     if (obs.is_gcp) {
       group_id = "GCP2D";
     }

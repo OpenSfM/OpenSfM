@@ -473,11 +473,7 @@ size_t BAHelpers::AddGCPToBundle(
     const auto point_id = "gcp-" + point.id_;
     Vec3d coordinates;
     if (!TriangulateGCP(point, shots, reproj_threshold, coordinates)) {
-      if (!point.lla_.empty()) {
-        coordinates = reference.ToTopocentric(point.GetLlaVec3d());
-      } else {
-        continue;
-      }
+      continue;
     }
 
     int valid_shots = 0;
@@ -701,6 +697,7 @@ py::dict BAHelpers::BundleShotPoses(
   }
 
   // add observations
+  int added_reprojections = 0;
   const auto t_projections_start = std::chrono::high_resolution_clock::now();
   for (const auto& shot_id : shot_ids) {
     const auto& shot = map.GetShot(shot_id);
@@ -708,6 +705,7 @@ py::dict BAHelpers::BundleShotPoses(
       const auto& obs = shot.GetObservationPool()->Get(lm_obs.second);
       ba.AddPointProjectionObservation(shot.id_, lm_obs.first->id_, obs.point,
                                        obs.scale, false, std::nullopt);
+      ++added_reprojections;
     }
   }
   const double t_projections =
@@ -771,11 +769,15 @@ py::dict BAHelpers::BundleShotPoses(
                                                             timer_setup)
           .count() /
       1000000.0;
+  report["wall_times"]["triangulate"] = 0.0;  // not done in this function
   report["wall_times"]["teardown"] =
       std::chrono::duration_cast<std::chrono::microseconds>(timer_teardown -
                                                             timer_run)
           .count() /
       1000000.0;
+  report["num_images"] = rig_instances_ids.size();
+  report["num_points"] = landmarks.size();
+  report["num_reprojections"] = added_reprojections;
   return report;
 }
 

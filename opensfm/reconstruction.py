@@ -40,15 +40,6 @@ class ReconstructionAlgorithm(str, enum.Enum):
     TRIANGULATION = "triangulation"
 
 
-def _get_camera_from_bundle(
-    ba: pybundle.BundleAdjuster, camera: pygeometry.Camera
-) -> None:
-    """Read camera parameters from a bundle adjustment problem."""
-    c = ba.get_camera(camera.id)
-    for k, v in c.get_parameters_map().items():
-        camera.set_parameter_value(k, v)
-
-
 def log_bundle_stats(bundle_type: str, bundle_report: Dict[str, Any]) -> None:
     times = bundle_report["wall_times"]
     time_secs = times["run"] + times["setup"] + \
@@ -1653,15 +1644,20 @@ def grow_reconstruction(
 
     logger.info("-------------------------------------------------------")
 
-    align_result = align_reconstruction(
+    align_gcp_result = align_reconstruction(
         reconstruction, gcp, config, bias_override=True)
-    if not align_result and config["bundle_compensate_gps_bias"]:
+    if not align_gcp_result and config["bundle_compensate_gps_bias"]:
         overidden_config = config.copy()
         overidden_config["bundle_compensate_gps_bias"] = False
         config = overidden_config
 
-    bundle_with_gcp_annealing(reconstruction, camera_priors, rig_camera_priors,
-                              gcp, final_bundle_grid, config)
+    if not align_gcp_result:
+        align_reconstruction(reconstruction, gcp, config)
+        bundle(reconstruction, camera_priors, rig_camera_priors,
+               gcp, final_bundle_grid, config)
+    else:
+        bundle_with_gcp_annealing(reconstruction, camera_priors, rig_camera_priors,
+                                  gcp, final_bundle_grid, config)
     resection_candidates.remove(*remove_outliers(reconstruction, config))
 
     if config["filter_final_point_cloud"]:

@@ -140,15 +140,25 @@ class IRLSIterationCallback : public ceres::IterationCallback {
       ss << "IRLS " << current_round_ << "/" << max_rounds_ << "    "
          << conv_type << "Tol";
 
+      // Aggregate per-shot PROJ_ groups into a single PROJ summary
+      int proj_outliers = 0, proj_total = 0;
       for (const auto& res : group_results) {
-        std::string label = res.group_id;
-        if (label == "GCP_PROJECTION") {
-          label = "GCP";
-        } else if (label == "CAMERA_PRIOR") {
-          label = "PRIOR";
+        if (res.group_id.rfind("PROJ_", 0) == 0) {
+          proj_outliers += res.num_outliers;
+          proj_total += res.num_total;
+        } else {
+          std::string label = res.group_id;
+          if (label == "GCP_PROJECTION") {
+            label = "GCP";
+          } else if (label == "CAMERA_PRIOR") {
+            label = "PRIOR";
+          }
+          ss << "    " << label << " " << res.num_outliers << "/"
+             << res.num_total;
         }
-        ss << "    " << label << " " << res.num_outliers << "/"
-           << res.num_total;
+      }
+      if (proj_total > 0) {
+        ss << "    PROJ " << proj_outliers << "/" << proj_total;
       }
 
       double rel_diff = 0.0;
@@ -455,6 +465,8 @@ void IRLSSolver::Run() {
   // the minimum IRLS weight (~1e-10). Without this, the zero tolerances let
   // the trust region grow unboundedly, making J^T W J + lambda*I singular.
   run_options.max_trust_region_radius = 1e8;
+
+  ComputeWeights();
 
   ceres::Solve(run_options, &problem_, &last_run_summary_);
 }
