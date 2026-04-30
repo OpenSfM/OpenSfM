@@ -336,70 +336,70 @@ std::vector<GroupWeightResult> IRLSSolver::ComputeWeights() {
     return results;
   }
 
-  double total_log_likelihood = 0.0;
-  bool computed_any = false;
-
-  for (auto& group_id_error_group : error_groups_) {
-    auto& group_id = group_id_error_group.first;
-    auto& error_group = group_id_error_group.second;
-    if (error_group.residual_block_ids.empty()) {
-      continue;
+  // Collect non-empty groups into a vector for parallel iteration
+  std::vector<ErrorGroup*> active_groups;
+  active_groups.reserve(error_groups_.size());
+  for (auto& [group_id, error_group] : error_groups_) {
+    if (!error_group.residual_block_ids.empty()) {
+      active_groups.push_back(&error_group);
     }
+  }
 
+  if (active_groups.empty()) {
+    return results;
+  }
+
+  // Per-group results collected in parallel
+  std::vector<GroupWeightResult> group_results(active_groups.size());
+
+#pragma omp parallel for schedule(dynamic)
+  for (int g = 0; g < static_cast<int>(active_groups.size()); ++g) {
+    auto& error_group = *active_groups[g];
     const size_t num_blocks = error_group.residual_block_ids.size();
-    std::vector<int> block_sizes(num_blocks);
-    std::vector<int> block_offsets(num_blocks);
-    size_t total_residuals = 0;
 
     // Pre-compute sizes and offsets
+    std::vector<int> block_offsets(num_blocks);
+    size_t total_residuals = 0;
     for (size_t i = 0; i < num_blocks; ++i) {
       const ceres::ResidualBlockId block_id = error_group.residual_block_ids[i];
       const ceres::CostFunction* cost_function =
           problem_.GetCostFunctionForResidualBlock(block_id);
-      int sz = cost_function->num_residuals();
-      block_sizes[i] = sz;
       block_offsets[i] = total_residuals;
-      total_residuals += sz;
+      total_residuals += cost_function->num_residuals();
     }
 
+    // Evaluate all residuals for this group
     std::vector<double> group_residuals_values(total_residuals);
+    std::vector<double*> parameter_blocks;
+    for (size_t i = 0; i < num_blocks; ++i) {
+      const ceres::ResidualBlockId block_id = error_group.residual_block_ids[i];
+      const ceres::CostFunction* cost_function =
+          problem_.GetCostFunctionForResidualBlock(block_id);
 
-    // Parallel residual evaluation
-#pragma omp parallel
-    {
-      constexpr int kMinBlocksForParallel = 10;
-      std::vector<double*> parameter_blocks;
-      parameter_blocks.reserve(kMinBlocksForParallel);
-#pragma omp for
-      for (int i = 0; i < static_cast<int>(num_blocks); ++i) {
-        const ceres::ResidualBlockId block_id =
-            error_group.residual_block_ids[i];
-        const ceres::CostFunction* cost_function =
-            problem_.GetCostFunctionForResidualBlock(block_id);
+      parameter_blocks.clear();
+      problem_.GetParameterBlocksForResidualBlock(block_id, &parameter_blocks);
 
-        parameter_blocks.clear();
-        problem_.GetParameterBlocksForResidualBlock(block_id,
-                                                    &parameter_blocks);
-
-        double* residual_ptr = &group_residuals_values[block_offsets[i]];
-        cost_function->Evaluate(parameter_blocks.data(), residual_ptr, nullptr);
-      }
+      double* residual_ptr = &group_residuals_values[block_offsets[i]];
+      cost_function->Evaluate(parameter_blocks.data(), residual_ptr, nullptr);
     }
 
     // Update weights for this group
-    auto res = reweighting_strategy_->ComputeGroupWeights(
+    group_results[g] = reweighting_strategy_->ComputeGroupWeights(
         group_residuals_values, error_group);
-    results.push_back(res);
-    total_log_likelihood += res.log_likelihood;
-    computed_any = true;
 
     // Update density with temperature
     error_group.outlier_density *= error_group.temperature;
   }
 
-  if (computed_any) {
-    current_log_likelihood_ = total_log_likelihood;
+  // Aggregate results sequentially
+  double total_log_likelihood = 0.0;
+  results.reserve(group_results.size());
+  for (auto& res : group_results) {
+    total_log_likelihood += res.log_likelihood;
+    results.push_back(std::move(res));
   }
+  current_log_likelihood_ = total_log_likelihood;
+
   return results;
 }
 
