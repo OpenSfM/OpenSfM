@@ -38,7 +38,7 @@ STEP_OUTPUT_FILES: Dict[str, str] = {
 # All files/directories a step produces that a subsequent step may need.
 # Used to bootstrap a new run from an existing one.
 STEP_OUTPUTS: Dict[str, List[str]] = {
-    "extract_metadata": ["exif"],
+    "extract_metadata": ["exif", "camera_models.json"],
     "detect_features": ["features"],
     "match_features": ["matches", "reports/matches.json"],
     "create_tracks": ["tracks.csv", "reports/tracks.json"],
