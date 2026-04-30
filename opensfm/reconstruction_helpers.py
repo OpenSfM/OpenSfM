@@ -217,6 +217,9 @@ def exif_to_metadata(
     if "skey" in exif:
         metadata.sequence_key.value = exif["skey"]
 
+    if "relative_altitude" in exif:
+        metadata.relative_altitude.value = exif["relative_altitude"]
+
     return metadata
 
 

@@ -37,6 +37,7 @@ struct ShotMeasurements {
   foundation::OptionalValue<Vec3d> opk_angles_;
   foundation::OptionalValue<int> orientation_;
   foundation::OptionalValue<std::string> sequence_key_;
+  foundation::OptionalValue<double> relative_altitude_;
   void Set(const ShotMeasurements& other);
 
   // Store any additional attributes

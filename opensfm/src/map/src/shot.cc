@@ -120,6 +120,11 @@ void ShotMeasurements::Set(const ShotMeasurements& other) {
   } else {
     sequence_key_.Reset();
   }
+  if (other.relative_altitude_.HasValue()) {
+    relative_altitude_.SetValue(other.relative_altitude_.Value());
+  } else {
+    relative_altitude_.Reset();
+  }
 
   // Copy the attributes
   attributes_ = other.GetAttributes();
