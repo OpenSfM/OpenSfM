@@ -45,8 +45,7 @@ void Landmark::AddObservation(Shot* shot, ObservationIndex obs_idx,
   pool_ = pool;
   observations_[shot] = obs_idx;
 }
-const std::map<Shot*, ObservationIndex, KeyCompare>& Landmark::GetObservations()
-    const {
+const ObservationMap<Shot*>& Landmark::GetObservations() const {
   return observations_;
 }
 

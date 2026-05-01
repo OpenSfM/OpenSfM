@@ -711,4 +711,5 @@ std::string TracksManager::AsString() const {
 
 std::string TracksManager::TRACKS_HEADER = "OPENSFM_TRACKS_VERSION";
 int TracksManager::TRACKS_VERSION = 2;
+
 }  // namespace map

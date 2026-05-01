@@ -15,16 +15,13 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 from opensfm import (
-    log,
     matching,
     multiview,
-    pybundle,
     pygeometry,
     pymap,
     pysfm,
     reconstruction_helpers as helpers,
     rig,
-    tracking,
     types,
 )
 from opensfm.align import align_reconstruction, apply_similarity
@@ -130,32 +127,6 @@ def bundle_shot_poses(
         config,
     )
     return report
-
-
-def bundle_local(
-    reconstruction: types.Reconstruction,
-    camera_priors: Dict[str, pygeometry.Camera],
-    rig_camera_priors: Dict[str, pymap.RigCamera],
-    gcp: Optional[List[pymap.GroundControlPoint]],
-    grid_size: int,
-    central_shot_id: str,
-    config: Dict[str, Any],
-) -> Tuple[Dict[str, Any], List[int]]:
-    """Bundle adjust the local neighborhood of a shot."""
-    pt_ids, report = pysfm.BAHelpers.bundle_local(
-        reconstruction.map,
-        dict(camera_priors),
-        dict(rig_camera_priors),
-        gcp if gcp is not None else [],
-        central_shot_id,
-        grid_size,
-        config,
-    )
-    log_bundle_stats("LOCAL", report)
-    logger.debug(report["brief_report"])
-    for line in report["irls_report"]:
-        logger.debug(line)
-    return pt_ids, report
 
 
 def pairwise_reconstructability(common_tracks: int, rotation_inliers: int) -> float:
@@ -631,80 +602,6 @@ def reconstructed_points_for_images(
         tracks_manager, non_reconstructed, list(reconstruction.points.keys())
     )
     return sorted(res.items(), key=lambda x: -x[1])
-
-
-def resect(
-    data: DataSetBase,
-    tracks_manager: pymap.TracksManager,
-    reconstruction: types.Reconstruction,
-    shot_id: str,
-    threshold: float,
-    min_inliers: int,
-) -> Tuple[bool, Set[str], Dict[str, Any]]:
-    """Try resecting and adding a shot to the reconstruction.
-
-    Return:
-        True on success.
-    """
-
-    rig_assignments = rig.rig_assignments_per_image(
-        data.load_rig_assignments())
-    camera = reconstruction.cameras[data.load_exif(shot_id)["camera"]]
-
-    bs, Xs, ids = [], [], []
-    for track, obs in tracks_manager.get_shot_observations(shot_id).items():
-        if track in reconstruction.points:
-            b = camera.pixel_bearing(obs.point)
-            bs.append(b)
-            Xs.append(reconstruction.points[track].coordinates)
-            ids.append(track)
-    bs = np.array(bs)
-    Xs = np.array(Xs)
-    if len(bs) < 5:
-        return False, set(), set(), {"num_common_points": len(bs)}
-
-    T = multiview.absolute_pose_ransac(bs, Xs, threshold, 1000, 0.999)
-
-    R = T[:, :3]
-    t = T[:, 3]
-
-    reprojected_bs = R.T.dot((Xs - t).T).T
-    reprojected_bs /= np.linalg.norm(reprojected_bs, axis=1)[:, np.newaxis]
-
-    inliers = np.linalg.norm(reprojected_bs - bs, axis=1) < threshold
-    ninliers = int(sum(inliers))
-
-    logger.info(
-        "{} resection inliers: {} / {}".format(shot_id, ninliers, len(bs)))
-    report: Dict[str, Any] = {
-        "num_common_points": len(bs),
-        "num_inliers": ninliers,
-    }
-    if ninliers >= min_inliers:
-        R = T[:, :3].T
-        t = -R.dot(T[:, 3])
-        assert shot_id not in reconstruction.shots
-
-        new_shots = add_shot(
-            data, reconstruction, rig_assignments, shot_id, pygeometry.Pose(
-                R, t)
-        )
-
-        if shot_id in rig_assignments:
-            triangulate_shot_features(
-                tracks_manager, reconstruction, new_shots, data.config
-            )
-        tracks = set()
-        for i, succeed in enumerate(inliers):
-            if succeed:
-                add_observation_to_reconstruction(
-                    tracks_manager, reconstruction, shot_id, ids[i]
-                )
-                tracks.add(ids[i])
-        report["shots"] = list(new_shots)
-        return True, new_shots, tracks, report
-    else:
-        return False, set(), set(), report
 
 
 def corresponding_tracks(
@@ -1199,43 +1096,24 @@ def get_actual_threshold(
 def remove_outliers(
     reconstruction: types.Reconstruction,
     config: Dict[str, Any],
-    points: Optional[Dict[str, pymap.Landmark]] = None,
+    points: Optional[Any] = None,
 ) -> Tuple[List[Tuple[str, str]], Set[str]]:
     """Remove points with large reprojection error.
 
     A list of point ids to be processed can be given in ``points``.
+    Delegates to C++ BAHelpers.remove_outliers for efficiency and to
+    avoid persistent storage of reproj errors/weights on landmarks.
     """
     if points is None:
-        points = reconstruction.points
-    threshold_sqr = get_actual_threshold(config, reconstruction.points) ** 2
-    weight_threshold = config.get("bundle_outlier_weight_threshold", 0.5)
-
-    outliers = []
-    for point_id in points:
-        point = reconstruction.points[point_id]
-        for shot_id, error in point.reprojection_errors.items():
-            error_sqr = error[0] ** 2 + error[1] ** 2
-            if error_sqr > threshold_sqr:
-                outliers.append((point_id, shot_id))
-        for shot_id, weight in point.reprojection_weights.items():
-            if weight < weight_threshold:
-                outliers.append((point_id, shot_id))
-
-    outliers = list(set(outliers))
-
-    track_ids = set()
-    for track, shot_id in outliers:
-        reconstruction.map.remove_observation(shot_id, track)
-        track_ids.add(track)
-
-    removed_tracks = set()
-    for track in track_ids:
-        if track in reconstruction.points:
-            lm = reconstruction.points[track]
-            if lm.number_of_observations() < 2:
-                reconstruction.map.remove_landmark(lm)
-                removed_tracks.add(track)
-
+        point_ids: List[str] = []
+    elif isinstance(points, dict):
+        point_ids = list(points.keys())
+    else:
+        # points is a list of landmark IDs (from bundle_local)
+        point_ids = list(points)
+    outliers, removed_tracks = pysfm.BAHelpers.remove_outliers(
+        reconstruction.map, config, point_ids
+    )
     logger.info("Removed outliers: {}".format(len(outliers)))
     return outliers, removed_tracks
 
@@ -1498,149 +1376,43 @@ def grow_reconstruction(
     remove_outliers(reconstruction, config)
     paint_reconstruction(data, tracks_manager, reconstruction)
 
-    resection_candidates = ResectionCandidates(tracks_manager, reconstruction)
-    should_bundle = ShouldBundle(data, reconstruction)
-    should_retriangulate = ShouldRetriangulate(data, reconstruction)
+    # Build shot_id -> camera_id mapping from exif
+    shot_camera_map = {}
+    for image in images:
+        exif = data.load_exif(image)
+        shot_camera_map[image] = exif["camera"]
 
-    local_ba_radius = config["local_bundle_radius"]
-    local_ba_grid = config["local_bundle_grid"]
-    final_bundle_grid = config["final_bundle_grid"]
+    # Build rig assignments for C++
+    rig_assignments_raw = rig.rig_assignments_per_image(
+        data.load_rig_assignments())
+    rig_assignments_cpp = {}
+    for shot_id, (instance_id, rig_camera_id, instance_shots) in rig_assignments_raw.items():
+        ra = pysfm.RigAssignment()
+        ra.instance_id = instance_id
+        ra.rig_camera_id = rig_camera_id
+        ra.instance_shots = instance_shots
+        rig_assignments_cpp[shot_id] = ra
 
-    resection_candidates.add(
-        list(reconstruction.shots.keys()),
-        list(reconstruction.points.keys()),
+    # Run the main grow loop in C++
+    grow_report = pysfm.ReconstructionGrower.grow(
+        reconstruction.map,
+        tracks_manager,
+        dict(camera_priors),
+        dict(rig_camera_priors),
+        shot_camera_map,
+        rig_assignments_cpp,
+        images,
+        reconstruction,
+        data,
+        config,
     )
-    redundant_shots = set()
-    ratio_redundant = config["resect_redundancy_threshold"]
+    report["grow"] = grow_report
 
-    while True:
-        if config["save_partial_reconstructions"]:
-            paint_reconstruction(data, tracks_manager, reconstruction)
-            data.save_reconstruction(
-                [reconstruction],
-                "reconstruction.{}.json".format(
-                    datetime.datetime.now().isoformat().replace(":", "_")
-                ),
-            )
+    # Remove resected shots from the caller's image set
+    images -= set(grow_report["resected_shots"])
 
-        candidates = resection_candidates.get_candidates(images)
-
-        logger.info("-------------------------------------------------------")
-        threshold = data.config["resection_threshold"]
-        min_inliers = data.config["resection_min_inliers"]
-
-        for image, resect_points in candidates:
-
-            new_tracks = {
-                t for t in tracks_manager.get_shot_observations(image)}
-            ratio_existing = resect_points / \
-                len(new_tracks) if new_tracks else 1.0
-            logger.info("Ratio of resected tracks in {}: {:.2f}".format(
-                image, ratio_existing))
-            if ratio_existing > ratio_redundant:
-                logger.info(
-                    f"Skipping {image} due to high redundancy ({ratio_existing:.2f})")
-                redundant_shots.add(image)
-                images.remove(image)
-                continue
-
-            ok, new_shots, resected_tracks, resrep = resect(
-                data,
-                tracks_manager,
-                reconstruction,
-                image,
-                threshold,
-                min_inliers,
-            )
-            if not ok:
-                continue
-
-            images -= new_shots
-            redundant_shots -= new_shots
-            bundle_shot_poses(
-                reconstruction,
-                new_shots,
-                camera_priors,
-                rig_camera_priors,
-                data.config,
-            )
-            resection_candidates.add(new_shots, resected_tracks)
-
-            logger.info(
-                f"Adding {' and '.join(new_shots)} to the reconstruction")
-            step: Dict[str, Union[List[int], List[str], int, List[int], Any]] = {
-                "images": list(new_shots),
-                "resection": resrep,
-                "memory_usage": context.current_memory_usage(),
-            }
-            report["steps"].append(step)
-
-            np_before = len(reconstruction.points)
-            new_tracks = triangulate_shot_features(
-                tracks_manager, reconstruction, new_shots, config)
-            resection_candidates.add([], new_tracks)
-            np_after = len(reconstruction.points)
-            step["triangulated_points"] = np_after - np_before
-
-            if should_retriangulate.should():
-                logger.info("Re-triangulating")
-                align_reconstruction(reconstruction, [], config)
-                b1rep = bundle(
-                    reconstruction, camera_priors, rig_camera_priors, None, local_ba_grid, config
-                )
-                rrep = retriangulate(tracks_manager, reconstruction, config)
-                resection_candidates.update(reconstruction)
-                b2rep = bundle(
-                    reconstruction, camera_priors, rig_camera_priors, None, local_ba_grid, config
-                )
-                resection_candidates.remove(
-                    *remove_outliers(reconstruction, config))
-                step["bundle"] = b1rep
-                step["retriangulation"] = rrep
-                step["bundle_after_retriangulation"] = b2rep
-                should_retriangulate.done()
-                should_bundle.done()
-            elif should_bundle.should():
-                align_reconstruction(reconstruction, [], config)
-                brep = bundle(
-                    reconstruction, camera_priors, rig_camera_priors, None, local_ba_grid, config
-                )
-                resection_candidates.remove(
-                    *remove_outliers(reconstruction, config))
-                step["bundle"] = brep
-                should_bundle.done()
-            elif local_ba_radius > 0:
-                bundled_points, brep = bundle_local(
-                    reconstruction,
-                    camera_priors,
-                    rig_camera_priors,
-                    None,
-                    local_ba_grid,
-                    image,
-                    config,
-                )
-                resection_candidates.remove(
-                    *remove_outliers(reconstruction, config, bundled_points))
-                step["local_bundle"] = brep
-
-            logger.info(
-                f"Reconstruction now has {len(reconstruction.shots)} shots.")
-
-            break
-        else:
-            if redundant_shots:
-                images.update(redundant_shots)
-                redundant_shots.clear()
-                ratio_redundant = 1
-                local_ba_radius = 0
-            else:
-                logger.info("Some images can not be added")
-                break
-
-        if config["incremental_max_shots_count"] > 0 and len(reconstruction.shots) >= config["incremental_max_shots_count"]:
-            logger.info(
-                f"Reached the maximum number of shots: {config['incremental_max_shots_count']}")
-            break
+    # Post-loop finalization
+    final_bundle_grid = config["final_bundle_grid"]
 
     logger.info("-------------------------------------------------------")
 
@@ -1658,7 +1430,7 @@ def grow_reconstruction(
     else:
         bundle_with_gcp_annealing(reconstruction, camera_priors, rig_camera_priors,
                                   gcp, final_bundle_grid, config)
-    resection_candidates.remove(*remove_outliers(reconstruction, config))
+    remove_outliers(reconstruction, config)
 
     if config["filter_final_point_cloud"]:
         bad_condition = pysfm.filter_badly_conditioned_points(

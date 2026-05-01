@@ -3,10 +3,12 @@ set(SFM_FILES
     ba_helpers.h
     tracks_helpers.h
     map_helpers.h
+    reconstruction_grower.h
     src/retriangulation.cc
     src/ba_helpers.cc
     src/tracks_helpers.cc
     src/map_helpers.cc
+    src/reconstruction_grower.cc
 )
 add_library(sfm ${SFM_FILES})
 target_link_libraries(sfm
@@ -15,8 +17,10 @@ target_link_libraries(sfm
   PRIVATE
     foundation
     map
+    geo
     geometry
     bundle
+    robust
     vl
 )
 target_include_directories(sfm PUBLIC ${CMAKE_SOURCE_DIR})

@@ -7,10 +7,12 @@
 #include <sfm/ba_helpers.h>
 #include <sfm/retriangulation.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 #include "geo/geo.h"
 #include "map/defines.h"
@@ -1248,5 +1250,148 @@ bundle::SimilarityParameterMask BAHelpers::DetermineGCPBiasParameters(
   }
 
   return Mask::All;
+}
+
+py::tuple BAHelpers::RemoveOutliers(
+    map::Map& map, const py::dict& config,
+    const std::vector<map::LandmarkId>& point_ids) {
+  // Determine which points to process
+  const auto& all_landmarks = map.GetLandmarks();
+  std::vector<const map::Landmark*> points_to_check;
+  if (point_ids.empty()) {
+    points_to_check.reserve(all_landmarks.size());
+    for (const auto& [id, lm] : all_landmarks) {
+      points_to_check.push_back(&lm);
+    }
+  } else {
+    points_to_check.reserve(point_ids.size());
+    for (const auto& pid : point_ids) {
+      auto it = all_landmarks.find(pid);
+      if (it != all_landmarks.end()) {
+        points_to_check.push_back(&it->second);
+      }
+    }
+  }
+
+  // Compute threshold
+  const std::string filter_type =
+      config["bundle_outlier_filtering_type"].cast<std::string>();
+  double threshold = 1.0;
+  if (filter_type == "FIXED") {
+    threshold = config["bundle_outlier_fixed_threshold"].cast<double>();
+  } else if (filter_type == "AUTO") {
+    // Compute robust stats over ALL landmarks (not just the subset)
+    std::vector<Eigen::Vector2d> all_errors;
+    for (const auto& [id, lm] : all_landmarks) {
+      for (const auto& [shot_id, err] : lm.GetReprojectionErrors()) {
+        all_errors.emplace_back(err[0], err[1]);
+      }
+    }
+    if (!all_errors.empty()) {
+      // Median of errors (componentwise)
+      std::vector<double> xs, ys;
+      xs.reserve(all_errors.size());
+      ys.reserve(all_errors.size());
+      for (const auto& e : all_errors) {
+        xs.push_back(e[0]);
+        ys.push_back(e[1]);
+      }
+      std::nth_element(xs.begin(), xs.begin() + xs.size() / 2, xs.end());
+      std::nth_element(ys.begin(), ys.begin() + ys.size() / 2, ys.end());
+      double median_x = xs[xs.size() / 2];
+      double median_y = ys[ys.size() / 2];
+
+      // MAD-based robust std: 1.486 * median(|error - median|)
+      std::vector<double> deviations;
+      deviations.reserve(all_errors.size());
+      for (const auto& e : all_errors) {
+        double dx = e[0] - median_x;
+        double dy = e[1] - median_y;
+        deviations.push_back(std::sqrt(dx * dx + dy * dy));
+      }
+      std::nth_element(deviations.begin(),
+                       deviations.begin() + deviations.size() / 2,
+                       deviations.end());
+      double robust_std = 1.486 * deviations[deviations.size() / 2];
+
+      double mean_norm =
+          std::sqrt((median_x + robust_std) * (median_x + robust_std) +
+                    (median_y + robust_std) * (median_y + robust_std));
+      // Actually match numpy: norm(mean + std) where mean is 2D vector and std
+      // is scalar-ish. The Python does: np.linalg.norm(robust_mean +
+      // robust_std) where robust_mean is 2D, robust_std is scalar. This adds
+      // std to each component, then takes norm.
+      mean_norm = std::sqrt((median_x + robust_std) * (median_x + robust_std) +
+                            (median_y + robust_std) * (median_y + robust_std));
+
+      double auto_ratio = config["bundle_outlier_auto_ratio"].cast<double>();
+      threshold = auto_ratio * mean_norm;
+    }
+  }
+
+  const double threshold_sqr = threshold * threshold;
+  const double weight_threshold =
+      config.contains("bundle_outlier_weight_threshold")
+          ? config["bundle_outlier_weight_threshold"].cast<double>()
+          : 0.5;
+
+  // Collect outliers
+  std::vector<std::pair<map::LandmarkId, map::ShotId>> outliers;
+  for (const auto* lm : points_to_check) {
+    for (const auto& [shot_id, error] : lm->GetReprojectionErrors()) {
+      double err_sqr = error[0] * error[0] + error[1] * error[1];
+      if (err_sqr > threshold_sqr) {
+        outliers.emplace_back(lm->id_, shot_id);
+      }
+    }
+    for (const auto& [shot_id, weight] : lm->GetReprojectionWeights()) {
+      if (weight < weight_threshold) {
+        outliers.emplace_back(lm->id_, shot_id);
+      }
+    }
+  }
+
+  // Deduplicate
+  std::sort(outliers.begin(), outliers.end());
+  outliers.erase(std::unique(outliers.begin(), outliers.end()), outliers.end());
+
+  // Remove observations and collect affected tracks
+  std::unordered_set<map::LandmarkId> affected_tracks;
+  for (const auto& [track_id, shot_id] : outliers) {
+    if (all_landmarks.find(track_id) != all_landmarks.end()) {
+      map.RemoveObservation(shot_id, track_id);
+      affected_tracks.insert(track_id);
+    }
+  }
+
+  // Remove landmarks with < 2 observations
+  std::vector<map::LandmarkId> removed_tracks;
+  for (const auto& track_id : affected_tracks) {
+    auto it = map.GetLandmarks().find(track_id);
+    if (it != map.GetLandmarks().end()) {
+      if (it->second.NumberOfObservations() < 2) {
+        map.RemoveLandmark(track_id);
+        removed_tracks.push_back(track_id);
+      }
+    }
+  }
+
+  // Clear reproj errors and weights on ALL landmarks to free memory
+  for (auto& [id, lm] : map.GetLandmarks()) {
+    lm.SetReprojectionErrors({});
+    lm.SetReprojectionWeights({});
+  }
+
+  // Build Python return values
+  py::list py_outliers;
+  for (const auto& [track_id, shot_id] : outliers) {
+    py_outliers.append(py::make_tuple(track_id, shot_id));
+  }
+  py::set py_removed;
+  for (const auto& tid : removed_tracks) {
+    py_removed.add(py::cast(tid));
+  }
+
+  return py::make_tuple(py_outliers, py_removed);
 }
 }  // namespace sfm

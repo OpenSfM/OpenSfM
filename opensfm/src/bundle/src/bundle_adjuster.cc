@@ -1,4 +1,5 @@
 #include <bundle/bundle_adjuster.h>
+#include <bundle/data/bias.h>
 #include <bundle/error/absolute_motion_errors.h>
 #include <bundle/error/motion_prior_errors.h>
 #include <bundle/error/parameters_errors.h>
@@ -14,9 +15,8 @@
 #include <string>
 #include <unordered_set>
 
-#include "bundle/data/bias.h"
-
 namespace {
+
 bool IsRigCameraUseful(bundle::RigCamera& rig_camera) {
   return !(rig_camera.GetParametersToOptimize().empty() &&
            rig_camera.GetValueData().isConstant(0.));
@@ -741,7 +741,8 @@ void BundleAdjuster::Run() {
     }
   }
 
-  // New generic prior errors (only rig instances + rig models + points for now)
+  // New generic prior errors (only rig instances + rig models + points for
+  // now)
   for (auto& i : points_) {
     if (!i.second.HasPrior()) {
       continue;
@@ -1182,6 +1183,7 @@ void BundleAdjuster::Run() {
   }
 
   solver.Run();
+
   const auto& summary = solver.GetSummary();
   last_run_solver_summary_ = summary;
   last_run_irls_summary_ = summary.IRLSReport();

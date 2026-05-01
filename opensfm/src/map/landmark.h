@@ -29,7 +29,7 @@ class Landmark {
   size_t NumberOfObservations() const;
   FeatureId GetObservationIdInShot(Shot* shot) const;
   const Observation& GetObservationInShot(Shot* shot) const;
-  const std::map<Shot*, ObservationIndex, KeyCompare>& GetObservations() const;
+  const ObservationMap<Shot*>& GetObservations() const;
   void ClearObservations() { observations_.clear(); }
 
   // Comparisons
@@ -49,16 +49,17 @@ class Landmark {
   void SetReprojectionWeights(const std::map<ShotId, double>& weights);
   std::map<ShotId, double> GetReprojectionWeights() const;
   void RemoveReprojectionWeight(const ShotId& shot_id);
+
  public:
   const LandmarkId id_;
 
  private:
   Vec3d global_pos_;  // point in global
-  std::map<Shot*, ObservationIndex, KeyCompare> observations_;
+  ObservationMap<Shot*> observations_;
   Vec3i color_;
   std::map<ShotId, Eigen::VectorXd> reproj_errors_;
   std::map<ShotId, double> reproj_weights_;
-  
+
   // Non-owning pointer to shared observation pool (set by Map)
   ObservationPool* pool_{nullptr};
 };

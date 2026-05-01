@@ -1,4 +1,5 @@
 #pragma once
+#include <absl/container/flat_hash_map.h>
 #include <foundation/types.h>
 
 #include <Eigen/Core>
@@ -31,6 +32,12 @@ using CameraUniqueId = size_t;
 using ObservationIndex = size_t;
 constexpr ObservationIndex INVALID_OBSERVATION_INDEX =
     static_cast<ObservationIndex>(-1);
+
+// Flat hash maps for observation storage — ~60% less memory than std::map.
+// Uses default pointer hash (std::hash<T*>) and equality.
+template <typename Key>
+using ObservationMap = absl::flat_hash_map<Key, ObservationIndex>;
+
 }  // namespace map
 
 template <class T>

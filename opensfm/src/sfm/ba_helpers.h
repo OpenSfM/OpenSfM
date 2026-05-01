@@ -68,6 +68,10 @@ class BAHelpers {
       map::Map& map, const std::unordered_set<map::ShotId>& shot_ids,
       size_t grid_size);
 
+  static py::tuple RemoveOutliers(
+      map::Map& map, const py::dict& config,
+      const std::vector<map::LandmarkId>& point_ids);
+
  private:
   static std::unordered_set<map::Shot*> DirectShotNeighbors(
       map::Map& map, const std::unordered_set<map::Shot*>& shot_ids,

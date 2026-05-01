@@ -6,6 +6,7 @@
 #include <pybind11/stl.h>
 #include <sfm/ba_helpers.h>
 #include <sfm/map_helpers.h>
+#include <sfm/reconstruction_grower.h>
 #include <sfm/retriangulation.h>
 #include <sfm/tracks_helpers.h>
 
@@ -34,7 +35,30 @@ PYBIND11_MODULE(pysfm, m) {
       .def_static("shot_neighborhood_ids", &sfm::BAHelpers::ShotNeighborhoodIds)
       .def_static("detect_alignment_constraints",
                   &sfm::BAHelpers::DetectAlignmentConstraints)
-      .def_static("add_gcp_to_bundle", &sfm::BAHelpers::AddGCPToBundle);
+      .def_static("add_gcp_to_bundle", &sfm::BAHelpers::AddGCPToBundle)
+      .def_static("remove_outliers", &sfm::BAHelpers::RemoveOutliers,
+                  py::arg("map"), py::arg("config"),
+                  py::arg("point_ids") = std::vector<map::LandmarkId>());
+
+  py::class_<sfm::RigAssignment>(m, "RigAssignment")
+      .def(py::init<>())
+      .def_readwrite("instance_id", &sfm::RigAssignment::instance_id)
+      .def_readwrite("rig_camera_id", &sfm::RigAssignment::rig_camera_id)
+      .def_readwrite("instance_shots", &sfm::RigAssignment::instance_shots);
+
+  py::class_<sfm::ReconstructionGrower>(m, "ReconstructionGrower")
+      .def_static("grow", &sfm::ReconstructionGrower::Grow, py::arg("map"),
+                  py::arg("tracks_manager"), py::arg("camera_priors"),
+                  py::arg("rig_camera_priors"), py::arg("shot_camera_map"),
+                  py::arg("rig_assignments"), py::arg("images"),
+                  py::arg("reconstruction"), py::arg("data"), py::arg("config"))
+      .def_static("triangulate_new_tracks",
+                  &sfm::ReconstructionGrower::TriangulateNewTracks,
+                  py::arg("map"), py::arg("tracks_manager"),
+                  py::arg("shot_ids"), py::arg("config"))
+      .def_static("parse_exif_dict", &sfm::ReconstructionGrower::ParseExifDict,
+                  py::arg("exif"), py::arg("use_altitude"), py::arg("reflat"),
+                  py::arg("reflon"), py::arg("refalt"));
 
   m.def("realign_maps", &sfm::retriangulation::RealignMaps,
         py::call_guard<py::gil_scoped_release>());

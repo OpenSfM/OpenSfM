@@ -79,11 +79,10 @@ class Shot {
   Mat4d GetCamToWorld() const { return GetPose()->CameraToWorld(); }
 
   // Landmark management
-  const std::map<Landmark*, ObservationIndex, KeyCompare>&
-  GetLandmarkObservations() const {
+  const ObservationMap<Landmark*>& GetLandmarkObservations() const {
     return landmark_observations_;
   }
-  std::map<Landmark*, ObservationIndex, KeyCompare>& GetLandmarkObservations() {
+  ObservationMap<Landmark*>& GetLandmarkObservations() {
     return landmark_observations_;
   }
   std::vector<Landmark*> ComputeValidLandmarks() {
@@ -171,8 +170,8 @@ class Shot {
   // Metadata
   ShotMeasurements shot_measurements_;
 
-  // In OpenSfM, we use a map to reproduce a similar behaviour
-  std::map<Landmark*, ObservationIndex, KeyCompare> landmark_observations_;
+  // In OpenSfM, we use a flat_hash_map for memory-efficient observation storage
+  ObservationMap<Landmark*> landmark_observations_;
 
   // Non-owning pointer to shared observation pool (set by Map)
   ObservationPool* pool_{nullptr};
