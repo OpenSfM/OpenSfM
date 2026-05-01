@@ -349,7 +349,8 @@ class DataSet(DataSetBase):
         class MatchingUnpickler(pickle.Unpickler):
             # Handle both numpy <2.0 (np.core) and numpy >=2.0 (np._core)
             _multiarray = (
-                np.core.multiarray if hasattr(np, "core") else np._core.multiarray
+                np.core.multiarray if hasattr(
+                    np, "core") else np._core.multiarray
             )
             modules_map = {
                 "numpy.core.multiarray._reconstruct": _multiarray,
@@ -370,7 +371,8 @@ class DataSet(DataSetBase):
                 return getattr(self.modules_map[classname], name)
 
         with self.io_handler.open_rb(self._matches_file(image)) as fin:
-            matches = MatchingUnpickler(BytesIO(gzip.decompress(fin.read()))).load()
+            matches = MatchingUnpickler(
+                BytesIO(gzip.decompress(fin.read()))).load()
         return matches
 
     def save_matches(self, image: str, matches: Dict[str, NDArray]) -> None:
@@ -402,7 +404,10 @@ class DataSet(DataSetBase):
         self, filename: Optional[str] = None
     ) -> pymap.TracksManager:
         """Return the tracks manager"""
-        with self.io_handler.open_rt(self._tracks_manager_file(filename)) as f:
+        path = self._tracks_manager_file(filename)
+        if isinstance(self.io_handler, io.IoFilesystemDefault):
+            return pymap.TracksManager.instanciate_from_file(path)
+        with self.io_handler.open_rt(path) as f:
             return pymap.TracksManager.instanciate_from_string(f.read())
 
     def tracks_exists(self, filename: Optional[str] = None) -> bool:
@@ -435,7 +440,8 @@ class DataSet(DataSetBase):
         minify: bool = False,
     ) -> None:
         with self.io_handler.open_wt(self._reconstruction_file(filename)) as fout:
-            io.json_dump(io.reconstructions_to_json(reconstruction), fout, minify)
+            io.json_dump(io.reconstructions_to_json(
+                reconstruction), fout, minify)
 
     def _reference_lla_path(self) -> str:
         return os.path.join(self.data_path, "reference_lla.json")
@@ -657,11 +663,13 @@ class DataSet(DataSetBase):
             io.json_dump(stats, fout)
 
     def image_as_array(self, image: str) -> NDArray:
-        logger.warning("image_as_array() is deprecated. Use load_image() instead.")
+        logger.warning(
+            "image_as_array() is deprecated. Use load_image() instead.")
         return self.load_image(image)
 
     def mask_as_array(self, image: str) -> Optional[NDArray]:
-        logger.warning("mask_as_array() is deprecated. Use load_mask() instead.")
+        logger.warning(
+            "mask_as_array() is deprecated. Use load_mask() instead.")
         return self.load_mask(image)
 
     def subset(self, name: str, images_subset: List[str]) -> "DataSet":
@@ -697,14 +705,16 @@ class DataSet(DataSetBase):
             files.append(
                 (
                     self._segmentation_file(image),
-                    os.path.join(subset_dataset_path, "segmentations", image + ".png"),
+                    os.path.join(subset_dataset_path,
+                                 "segmentations", image + ".png"),
                 )
             )
             if image in self.mask_files:
                 files.append(
                     (
                         self.mask_files[image],
-                        os.path.join(subset_dataset_path, "masks", image + ".png"),
+                        os.path.join(subset_dataset_path,
+                                     "masks", image + ".png"),
                     )
                 )
 
@@ -837,7 +847,8 @@ class UndistortedDataSet:
     def save_undistorted_segmentation(self, image: str, array: NDArray) -> None:
         """Save the undistorted image segmentation."""
         self.io_handler.mkdir_p(self._undistorted_segmentation_path())
-        self.io_handler.imwrite(self._undistorted_segmentation_file(image), array)
+        self.io_handler.imwrite(
+            self._undistorted_segmentation_file(image), array)
 
     def load_undistorted_segmentation_mask(self, image: str) -> Optional[NDArray]:
         """Build a mask from the undistorted segmentation.
@@ -999,7 +1010,8 @@ class UndistortedDataSet:
         filename = os.path.join(self.data_path, "reconstruction.json")
         self.io_handler.mkdir_p(self.data_path)
         with self.io_handler.open_wt(filename) as fout:
-            io.json_dump(io.reconstructions_to_json(reconstruction), fout, minify=True)
+            io.json_dump(io.reconstructions_to_json(
+                reconstruction), fout, minify=True)
 
 
 def invent_reference_from_gps_and_gcp(

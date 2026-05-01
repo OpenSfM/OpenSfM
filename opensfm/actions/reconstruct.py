@@ -20,7 +20,8 @@ def run_dataset(
             data, tracks_manager
         )
     else:
-        raise RuntimeError(f"Unsupported algorithm for reconstruction {algorithm}")
+        raise RuntimeError(
+            f"Unsupported algorithm for reconstruction {algorithm}")
 
     del tracks_manager
     gc.collect()
