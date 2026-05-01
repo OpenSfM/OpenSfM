@@ -126,15 +126,18 @@ else:
         return available_mem
 
     def current_memory_usage() -> int:
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * rusage_unit
+        """Log memory usage in MB."""
+        mem_bytes = resource.getrusage(
+            resource.RUSAGE_SELF).ru_maxrss * rusage_unit
+        return float(mem_bytes) / 1024 / 1024
 
 
 def log_memory(stage: str) -> int:
-    """Log memory usage at a given stage and return usage in KB."""
-    mem_kb = current_memory_usage()
-    mem_gb = mem_kb / 1024 / 1024 / 1024
+    """Log memory usage at a given stage and return usage in MB."""
+    mem_mb = current_memory_usage()
+    mem_gb = mem_mb / 1024
     logger.info(f"[Memory] {stage}: {mem_gb:.1f} GB")
-    return mem_kb
+    return mem_mb
 
 
 def processes_that_fit_in_memory(desired: int, per_process: int) -> int:

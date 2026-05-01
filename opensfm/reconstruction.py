@@ -1674,7 +1674,7 @@ def grow_reconstruction(
     report["memory_delta"] = final_memory - initial_memory
     logger.info(
         f"[Memory] Total memory change during grow_reconstruction: "
-        f"{(final_memory - initial_memory) / 1024 / 1024 / 1024:.1f} GB"
+        f"{(final_memory - initial_memory) / 1024:.1f} GB"
     )
     return reconstruction, report
 
