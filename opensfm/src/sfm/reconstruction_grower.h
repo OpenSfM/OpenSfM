@@ -54,6 +54,17 @@ class ReconstructionGrower {
       map::Map& map, const map::TracksManager& tracks_manager,
       const std::unordered_set<map::ShotId>& shot_ids, const py::dict& config);
 
+  /// Run the triangulation reconstruction inner loop (Phase 3).
+  /// outer_iterations x (robust retriangulate + inner_iterations x (align +
+  /// bundle + remove_outliers))
+  static py::dict TriangulationReconstruction(
+      map::Map& map, const map::TracksManager& tracks_manager,
+      const std::unordered_map<map::CameraId, geometry::Camera>& camera_priors,
+      const std::unordered_map<map::RigCameraId, map::RigCamera>&
+          rig_camera_priors,
+      int grid_size, py::object reconstruction, const py::dict& config,
+      int outer_iterations = 3, int inner_iterations = 5);
+
  private:
   // ---- Resection ----
   struct ResectionResult {
@@ -69,6 +80,7 @@ class ReconstructionGrower {
       const map::ShotId& shot_id, const map::CameraId& camera_id,
       double threshold, int min_inliers,
       const std::unordered_map<map::ShotId, RigAssignment>& rig_assignments,
+      const std::unordered_map<map::ShotId, map::CameraId>& shot_camera_map,
       const py::dict& config);
 
   // ---- Resection candidates ----
@@ -132,9 +144,8 @@ class ReconstructionGrower {
 
   // ---- Outlier removal helper ----
   static void RemoveOutliersAndUpdate(
-      map::Map& map, const py::dict& config,
-      const std::vector<map::LandmarkId>& point_ids,
-      ResectionCandidates& candidates);
+      map::Map& map, const py::dict& config, ResectionCandidates& candidates,
+      const std::vector<map::LandmarkId>& point_ids = {});
 
   // ---- Reusable buffers (avoid per-shot allocations) ----
   struct TriangulationBuffers {

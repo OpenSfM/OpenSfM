@@ -16,5 +16,6 @@ int Triangulate(map::Map& map,
                 int processing_threads);
 void ReconstructFromTracksManager(map::Map& map,
                                   const map::TracksManager& tracks_manager,
-                                  const py::dict& config);
+                                  const py::dict& config,
+                                  bool use_robust = false);
 }  // namespace sfm::retriangulation

@@ -210,31 +210,11 @@ map::ShotMeasurements ReconstructionGrower::ParseExifDict(const py::dict& exif,
 // ---------- RemoveOutliersAndUpdate ----------
 
 void ReconstructionGrower::RemoveOutliersAndUpdate(
-    map::Map& map, const py::dict& config,
-    const std::vector<map::LandmarkId>& point_ids,
-    ResectionCandidates& candidates) {
+    map::Map& map, const py::dict& config, ResectionCandidates& candidates,
+    const std::vector<map::LandmarkId>& point_ids) {
   auto result = BAHelpers::RemoveOutliers(map, config, point_ids);
-
-  // Extract outlier pairs
-  py::list outlier_list = result[0].cast<py::list>();
-  std::vector<std::pair<map::LandmarkId, map::ShotId>> outliers;
-  outliers.reserve(outlier_list.size());
-  for (auto& item : outlier_list) {
-    auto t = item.cast<py::tuple>();
-    outliers.emplace_back(t[0].cast<map::LandmarkId>(),
-                          t[1].cast<map::ShotId>());
-  }
-
-  // Extract removed track ids
-  py::list removed_list = result[1].cast<py::list>();
-  std::vector<map::LandmarkId> removed;
-  removed.reserve(removed_list.size());
-  for (auto& item : removed_list) {
-    removed.push_back(item.cast<map::LandmarkId>());
-  }
-
-  LogInfo("Removed outliers: " + std::to_string(outliers.size()));
-  candidates.Remove(outliers, removed);
+  LogInfo("Removed outliers: " + std::to_string(result.outliers.size()));
+  candidates.Remove(result.outliers, result.removed_tracks);
 }
 
 // ---------- ResectionCandidates ----------
@@ -327,6 +307,9 @@ std::unordered_set<map::TrackId> ReconstructionGrower::TriangulateNewTracks(
   // Gather candidate tracks from the new shots
   std::unordered_set<map::TrackId> candidate_tracks;
   for (const auto& shot_id : shot_ids) {
+    if (!tracks_manager.HasShotObservations(shot_id)) {
+      continue;
+    }
     auto obs = tracks_manager.GetShotObservations(shot_id);
     for (const auto& [track_id, ob] : obs) {
       if (!map.HasLandmark(track_id)) {
@@ -395,6 +378,7 @@ ReconstructionGrower::ResectionResult ReconstructionGrower::Resect(
     const map::ShotId& shot_id, const map::CameraId& camera_id,
     double threshold, int min_inliers,
     const std::unordered_map<map::ShotId, RigAssignment>& rig_assignments,
+    const std::unordered_map<map::ShotId, map::CameraId>& shot_camera_map,
     const py::dict& config) {
   ResectionResult result;
 
@@ -500,10 +484,16 @@ ReconstructionGrower::ResectionResult ReconstructionGrower::Resect(
       const auto& member_rcid = member_it->second.rig_camera_id;
 
       if (!map.HasRigCamera(member_rcid)) {
-        // TODO : shouldn't we initialize with the real rig camera ?
         map.CreateRigCamera(map::RigCamera(geometry::Pose(), member_rcid));
       }
-      result.new_shots.insert(member_shot_id);
+
+      // Create the member shot in the map
+      auto member_cam_it = shot_camera_map.find(member_shot_id);
+      if (member_cam_it != shot_camera_map.end()) {
+        map.CreateShot(member_shot_id, member_cam_it->second, member_rcid,
+                       instance_id, geometry::Pose());
+        result.new_shots.insert(member_shot_id);
+      }
     }
 
     // Update instance pose from the resected shot
@@ -532,6 +522,45 @@ ReconstructionGrower::ResectionResult ReconstructionGrower::Resect(
 
   result.success = true;
   return result;
+}
+
+// ---------- TriangulationReconstruction ----------
+
+py::dict ReconstructionGrower::TriangulationReconstruction(
+    map::Map& map, const map::TracksManager& tracks_manager,
+    const std::unordered_map<map::CameraId, geometry::Camera>& camera_priors,
+    const std::unordered_map<map::RigCameraId, map::RigCamera>&
+        rig_camera_priors,
+    int grid_size, py::object reconstruction, const py::dict& config,
+    int outer_iterations, int inner_iterations) {
+  py::object py_align =
+      py::module::import("opensfm.reconstruction").attr("align_reconstruction");
+
+  AlignedVector<map::GroundControlPoint> empty_gcp;
+
+  for (int i = 0; i < outer_iterations; ++i) {
+    // Robust retriangulation: clear all points and re-triangulate
+    map.ClearObservationsAndLandmarks();
+    sfm::retriangulation::ReconstructFromTracksManager(map, tracks_manager,
+                                                       config,
+                                                       /*use_robust=*/true);
+
+    for (int j = 0; j < inner_iterations; ++j) {
+      py_align(reconstruction, py::list(), config);
+
+      auto brep = BAHelpers::Bundle(map, camera_priors, rig_camera_priors,
+                                    empty_gcp, grid_size, config);
+      LogBundleStats("GLOBAL", brep);
+
+      auto outlier_result = BAHelpers::RemoveOutliers(map, config);
+      LogInfo("Removed outliers: " +
+              std::to_string(outlier_result.outliers.size()));
+    }
+  }
+
+  py::dict report;
+  report["num_points"] = py::cast(map.NumberOfLandmarks());
+  return report;
 }
 
 // ---------- Grow ----------
@@ -639,9 +668,9 @@ py::dict ReconstructionGrower::Grow(
       }
       const auto& cam_id = cam_it->second;
 
-      auto resection =
-          Resect(map, tracks_manager, shot_id, cam_id, cfg.resection_threshold,
-                 cfg.resection_min_inliers, rig_assignments, config);
+      auto resection = Resect(
+          map, tracks_manager, shot_id, cam_id, cfg.resection_threshold,
+          cfg.resection_min_inliers, rig_assignments, shot_camera_map, config);
 
       if (!resection.success) {
         continue;
@@ -726,14 +755,7 @@ py::dict ReconstructionGrower::Grow(
         }
 
         // Remove outliers after retriangulation
-        {
-          std::vector<map::LandmarkId> all_lm_ids;
-          all_lm_ids.reserve(map.NumberOfLandmarks());
-          for (const auto& [tid, lm] : map.GetLandmarks()) {
-            all_lm_ids.push_back(tid);
-          }
-          RemoveOutliersAndUpdate(map, config, all_lm_ids, candidates);
-        }
+        RemoveOutliersAndUpdate(map, config, candidates);
 
         retri_sched.Done(map.NumberOfLandmarks());
         bundle_sched.Done(map.NumberOfLandmarks(), map.NumberOfShots());
@@ -748,14 +770,7 @@ py::dict ReconstructionGrower::Grow(
         }
 
         // Remove outliers after global bundle
-        {
-          std::vector<map::LandmarkId> all_lm_ids;
-          all_lm_ids.reserve(map.NumberOfLandmarks());
-          for (const auto& [tid, lm] : map.GetLandmarks()) {
-            all_lm_ids.push_back(tid);
-          }
-          RemoveOutliersAndUpdate(map, config, all_lm_ids, candidates);
-        }
+        RemoveOutliersAndUpdate(map, config, candidates);
 
         bundle_sched.Done(map.NumberOfLandmarks(), map.NumberOfShots());
 
@@ -764,16 +779,9 @@ py::dict ReconstructionGrower::Grow(
         auto local_result = BAHelpers::BundleLocal(
             map, camera_priors, rig_camera_priors, empty_gcp, shot_id,
             cfg.local_bundle_grid, config);
-        LogBundleStats("LOCAL", local_result[1].cast<py::dict>());
-
-        // Local bundle returns (pt_ids, report) tuple
-        py::list local_point_ids = local_result[0].cast<py::list>();
-        std::vector<map::LandmarkId> lp_ids;
-        lp_ids.reserve(local_point_ids.size());
-        for (auto& item : local_point_ids) {
-          lp_ids.push_back(item.cast<map::LandmarkId>());
-        }
-        RemoveOutliersAndUpdate(map, config, lp_ids, candidates);
+        LogBundleStats("LOCAL", local_result.report);
+        RemoveOutliersAndUpdate(map, config, candidates,
+                                local_result.point_ids);
       }
 
       LogInfo("Reconstruction now has " + std::to_string(map.NumberOfShots()) +

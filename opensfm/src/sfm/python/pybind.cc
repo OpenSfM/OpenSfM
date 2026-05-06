@@ -29,14 +29,14 @@ PYBIND11_MODULE(pysfm, m) {
 
   py::class_<sfm::BAHelpers>(m, "BAHelpers")
       .def_static("bundle", &sfm::BAHelpers::Bundle)
-      .def_static("bundle_local", &sfm::BAHelpers::BundleLocal)
+      .def_static("bundle_local", &sfm::BAHelpers::BundleLocalPython)
       .def_static("bundle_shot_poses", &sfm::BAHelpers::BundleShotPoses)
       .def_static("bundle_to_map", &sfm::BAHelpers::BundleToMap)
       .def_static("shot_neighborhood_ids", &sfm::BAHelpers::ShotNeighborhoodIds)
       .def_static("detect_alignment_constraints",
                   &sfm::BAHelpers::DetectAlignmentConstraints)
       .def_static("add_gcp_to_bundle", &sfm::BAHelpers::AddGCPToBundle)
-      .def_static("remove_outliers", &sfm::BAHelpers::RemoveOutliers,
+      .def_static("remove_outliers", &sfm::BAHelpers::RemoveOutliersPython,
                   py::arg("map"), py::arg("config"),
                   py::arg("point_ids") = std::vector<map::LandmarkId>());
 
@@ -58,7 +58,14 @@ PYBIND11_MODULE(pysfm, m) {
                   py::arg("shot_ids"), py::arg("config"))
       .def_static("parse_exif_dict", &sfm::ReconstructionGrower::ParseExifDict,
                   py::arg("exif"), py::arg("use_altitude"), py::arg("reflat"),
-                  py::arg("reflon"), py::arg("refalt"));
+                  py::arg("reflon"), py::arg("refalt"))
+      .def_static("triangulation_reconstruction",
+                  &sfm::ReconstructionGrower::TriangulationReconstruction,
+                  py::arg("map"), py::arg("tracks_manager"),
+                  py::arg("camera_priors"), py::arg("rig_camera_priors"),
+                  py::arg("grid_size"), py::arg("reconstruction"),
+                  py::arg("config"), py::arg("outer_iterations") = 3,
+                  py::arg("inner_iterations") = 2);
 
   m.def("realign_maps", &sfm::retriangulation::RealignMaps,
         py::call_guard<py::gil_scoped_release>());
@@ -66,5 +73,6 @@ PYBIND11_MODULE(pysfm, m) {
   m.def("reconstruct_from_tracks_manager",
         &sfm::retriangulation::ReconstructFromTracksManager, py::arg("map"),
         py::arg("tracks_manager"), py::arg("config"),
+        py::arg("use_robust") = false,
         py::call_guard<py::gil_scoped_release>());
 }

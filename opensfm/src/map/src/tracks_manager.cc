@@ -376,7 +376,8 @@ std::unordered_map<TrackId, Observation> TracksManager::GetShotObservations(
     const ShotId& shot) const {
   const auto it = shot_id_to_index_.find(shot);
   if (it == shot_id_to_index_.end()) {
-    throw std::runtime_error("Accessing invalid shot ID");
+    throw std::runtime_error("Accessing invalid shot ID for observations: " +
+                             shot);
   }
   const StringId shot_idx = it->second;
 

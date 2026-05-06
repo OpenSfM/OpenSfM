@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 from opensfm import (
+    config,
     matching,
     multiview,
     pygeometry,
@@ -510,8 +511,7 @@ def reconstruction_from_relative_pose(
         )
 
     align_reconstruction(reconstruction, [], data.config)
-    triangulate_shot_features(
-        tracks_manager, reconstruction, new_shots, data.config)
+    retriangulate(tracks_manager, reconstruction, data.config)
 
     logger.info("Triangulated: {}".format(len(reconstruction.points)))
     report["triangulated_points"] = len(reconstruction.points)
@@ -524,8 +524,8 @@ def reconstruction_from_relative_pose(
     bundle_shot_poses(
         reconstruction, to_adjust, camera_priors, rig_camera_priors, data.config
     )
-
     retriangulate(tracks_manager, reconstruction, data.config)
+
     if len(reconstruction.points) < min_inliers:
         report["decision"] = (
             "Re-triangulation after initial motion did not generate enough points"
@@ -584,24 +584,6 @@ def bootstrap_reconstruction(
     report.update(rec_report)
 
     return rec, report
-
-
-def reconstructed_points_for_images(
-    tracks_manager: pymap.TracksManager,
-    reconstruction: types.Reconstruction,
-    images: Set[str],
-) -> List[Tuple[str, int]]:
-    """Number of reconstructed points visible on each image.
-
-    Returns:
-        A list of (image, num_point) pairs sorted by decreasing number
-        of points.
-    """
-    non_reconstructed = [im for im in images if im not in reconstruction.shots]
-    res = pysfm.count_tracks_per_shot(
-        tracks_manager, non_reconstructed, list(reconstruction.points.keys())
-    )
-    return sorted(res.items(), key=lambda x: -x[1])
 
 
 def corresponding_tracks(
@@ -671,354 +653,6 @@ def resect_reconstruction(
     return True, similarity, inliers
 
 
-def add_observation_to_reconstruction(
-    tracks_manager: pymap.TracksManager,
-    reconstruction: types.Reconstruction,
-    shot_id: str,
-    track_id: str,
-) -> None:
-    obs_idx = tracks_manager.get_observation_index(shot_id, track_id)
-    reconstruction.add_observation_by_index(shot_id, track_id, obs_idx)
-
-
-class TrackHandlerBase(ABC):
-    """Interface for providing/retrieving tracks from/to 'TrackTriangulator'."""
-
-    @abstractmethod
-    def get_observations(self, track_id: str) -> Dict[str, pymap.Observation]:
-        """Returns the observations of 'track_id'"""
-        pass
-
-    @abstractmethod
-    def store_track_coordinates(self, track_id: str, coordinates: NDArray) -> None:
-        """Stores coordinates of triangulated track."""
-        pass
-
-    @abstractmethod
-    def store_inliers_observation(self, track_id: str, shot_id: str) -> None:
-        """Called by the 'TrackTriangulator' for each track inlier found."""
-        pass
-
-
-class TrackHandlerTrackManager(TrackHandlerBase):
-    """Provider that reads tracks from a 'TrackManager' object."""
-
-    tracks_manager: pymap.TracksManager
-    reconstruction: types.Reconstruction
-
-    def __init__(
-        self,
-        tracks_manager: pymap.TracksManager,
-        reconstruction: types.Reconstruction,
-    ) -> None:
-        self.tracks_manager = tracks_manager
-        self.reconstruction = reconstruction
-
-    def get_observations(self, track_id: str) -> Dict[str, pymap.Observation]:
-        """Return the observations of 'track_id', for all
-        shots that appears in 'self.reconstruction.shots'
-        """
-        return {
-            k: v
-            for k, v in self.tracks_manager.get_track_observations(track_id).items()
-            if k in self.reconstruction.shots
-        }
-
-    def store_track_coordinates(self, track_id: str, coordinates: NDArray) -> None:
-        """Stores coordinates of triangulated track."""
-        self.reconstruction.create_point(track_id, coordinates)
-
-    def store_inliers_observation(self, track_id: str, shot_id: str) -> None:
-        """Stores triangulation inliers in the tracks manager."""
-        obs_idx = self.tracks_manager.get_observation_index(shot_id, track_id)
-        self.reconstruction.add_observation_by_index(
-            shot_id, track_id, obs_idx)
-
-
-class TrackTriangulator:
-    """Triangulate tracks in a reconstruction.
-
-    Caches shot origin and rotation matrix
-    """
-
-    # for getting shots
-    reconstruction: types.Reconstruction
-
-    # for storing tracks inliers
-    tracks_handler: TrackHandlerBase
-
-    # caches
-    origins: Dict[str, NDArray] = {}
-    rotation_inverses: Dict[str, NDArray] = {}
-    Rts: Dict[str, NDArray] = {}
-
-    def __init__(
-        self, reconstruction: types.Reconstruction, tracks_handler: TrackHandlerBase
-    ) -> None:
-        """Build a triangulator for a specific reconstruction."""
-        self.reconstruction = reconstruction
-        self.tracks_handler = tracks_handler
-        self.origins: Dict[str, NDArray] = {}
-        self.rotation_inverses: Dict[str, NDArray] = {}
-        self.Rts: Dict[str, NDArray] = {}
-
-    def triangulate_robust(
-        self,
-        track: str,
-        reproj_threshold: float,
-        min_ray_angle_degrees: float,
-        min_depth: float,
-        iterations: int,
-    ) -> bool:
-        """Triangulate track in a RANSAC way and add point to reconstruction."""
-        os, bs, ids = [], [], []
-        for shot_id, obs in self.tracks_handler.get_observations(track).items():
-            shot = self.reconstruction.shots[shot_id]
-            os.append(self._shot_origin(shot))
-            b = shot.camera.pixel_bearing(np.array(obs.point))
-            r = self._shot_rotation_inverse(shot)
-            bs.append(r.dot(b))
-            ids.append(shot_id)
-
-        if len(ids) < 2:
-            return False
-
-        os = np.array(os)
-        bs = np.array(bs)
-
-        best_inliers = []
-        best_point = None
-        combinatiom_tried = set()
-        ransac_tries = 11  # 0.99 proba, 60% inliers
-        all_combinations = list(combinations(range(len(ids)), 2))
-
-        thresholds = len(os) * [reproj_threshold]
-        min_ray_angle_radians = np.radians(min_ray_angle_degrees)
-        for i in range(ransac_tries):
-            random_id = int(np.random.rand() * (len(all_combinations) - 1))
-            if random_id in combinatiom_tried:
-                continue
-
-            i, j = all_combinations[random_id]
-            combinatiom_tried.add(random_id)
-
-            os_t = np.array([os[i], os[j]])
-            bs_t = np.array([bs[i], bs[j]])
-
-            valid_triangulation, X = pygeometry.triangulate_bearings_midpoint(
-                os_t,
-                bs_t,
-                thresholds,
-                min_ray_angle_radians,
-                min_depth,
-            )
-            X = pygeometry.point_refinement(os_t, bs_t, X, iterations)
-
-            if valid_triangulation:
-                reprojected_bs = X - os
-                reprojected_bs /= np.linalg.norm(reprojected_bs,
-                                                 axis=1)[:, np.newaxis]
-                inliers = np.nonzero(
-                    np.linalg.norm(reprojected_bs - bs,
-                                   axis=1) < reproj_threshold
-                )[0].tolist()
-
-                if len(inliers) > len(best_inliers):
-                    _, new_X = pygeometry.triangulate_bearings_midpoint(
-                        os[inliers],
-                        bs[inliers],
-                        len(inliers) * [reproj_threshold],
-                        min_ray_angle_radians,
-                        min_depth,
-                    )
-                    new_X = pygeometry.point_refinement(
-                        os[inliers], bs[inliers], X, iterations
-                    )
-
-                    reprojected_bs = new_X - os
-                    reprojected_bs /= np.linalg.norm(reprojected_bs, axis=1)[
-                        :, np.newaxis
-                    ]
-                    ls_inliers = np.nonzero(
-                        np.linalg.norm(reprojected_bs - bs,
-                                       axis=1) < reproj_threshold
-                    )[0]
-                    if len(ls_inliers) > len(inliers):
-                        best_inliers = ls_inliers
-                        best_point = new_X.tolist()
-                    else:
-                        best_inliers = inliers
-                        best_point = X.tolist()
-
-                    pout = 0.99
-                    inliers_ratio = float(len(best_inliers)) / len(ids)
-                    if inliers_ratio == 1.0:
-                        break
-                    optimal_iter = math.log(1.0 - pout) / math.log(
-                        1.0 - inliers_ratio * inliers_ratio
-                    )
-                    if optimal_iter <= i:
-                        break
-
-        if len(best_inliers) > 1:
-            self.tracks_handler.store_track_coordinates(track, best_point)
-            for i in best_inliers:
-                self.tracks_handler.store_inliers_observation(track, ids[i])
-        return len(best_inliers) > 1
-
-    def triangulate(
-        self,
-        track: str,
-        reproj_threshold: float,
-        min_ray_angle_degrees: float,
-        min_depth: float,
-        iterations: int,
-    ) -> bool:
-        """Triangulate track and add point to reconstruction."""
-        os, bs, ids = [], [], []
-        for shot_id, obs in self.tracks_handler.get_observations(track).items():
-            shot = self.reconstruction.shots[shot_id]
-            os.append(self._shot_origin(shot))
-            b = shot.camera.pixel_bearing(np.array(obs.point))
-            r = self._shot_rotation_inverse(shot)
-            bs.append(r.dot(b))
-            ids.append(shot_id)
-
-        if len(os) >= 2:
-            thresholds = len(os) * [reproj_threshold]
-            min_ray_angle_radians = np.radians(min_ray_angle_degrees)
-            valid_triangulation, X = pygeometry.triangulate_bearings_midpoint(
-                np.asarray(os),
-                np.asarray(bs),
-                thresholds,
-                min_ray_angle_radians,
-                min_depth,
-            )
-            if valid_triangulation:
-                X = pygeometry.point_refinement(
-                    np.array(os), np.array(bs), X, iterations
-                )
-                self.tracks_handler.store_track_coordinates(track, X.tolist())
-                for shot_id in ids:
-                    self.tracks_handler.store_inliers_observation(
-                        track, shot_id)
-                return True
-
-        return False
-
-    def triangulate_dlt(
-        self,
-        track: str,
-        reproj_threshold: float,
-        min_ray_angle_degrees: float,
-        min_depth: float,
-        iterations: int,
-    ) -> bool:
-        """Triangulate track using DLT and add point to reconstruction."""
-        Rts, bs, os, ids = [], [], [], []
-        for shot_id, obs in self.tracks_handler.get_observations(track).items():
-            shot = self.reconstruction.shots[shot_id]
-            os.append(self._shot_origin(shot))
-            Rts.append(self._shot_Rt(shot))
-            b = shot.camera.pixel_bearing(np.array(obs.point))
-            bs.append(b)
-            ids.append(shot_id)
-
-        if len(Rts) >= 2:
-            e, X = pygeometry.triangulate_bearings_dlt(
-                # pyre-fixme[6]: For 1st argument expected `List[ndarray[typing.Any,
-                #  typing.Any]]` but got `ndarray[typing.Any, dtype[typing.Any]]`.
-                np.asarray(Rts),
-                np.asarray(bs),
-                reproj_threshold,
-                np.radians(min_ray_angle_degrees),
-                min_depth,
-            )
-            if e:
-                X = pygeometry.point_refinement(
-                    np.array(os), np.array(bs), X, iterations
-                )
-                self.tracks_handler.store_track_coordinates(track, X.tolist())
-                for shot_id in ids:
-                    self.tracks_handler.store_inliers_observation(
-                        track, shot_id)
-                return True
-        return False
-
-    def _shot_origin(self, shot: pymap.Shot) -> NDArray:
-        if shot.id in self.origins:
-            return self.origins[shot.id]
-        else:
-            o = shot.pose.get_origin()
-            self.origins[shot.id] = o
-            return o
-
-    def _shot_rotation_inverse(self, shot: pymap.Shot) -> NDArray:
-        if shot.id in self.rotation_inverses:
-            return self.rotation_inverses[shot.id]
-        else:
-            r = shot.pose.get_rotation_matrix().T
-            self.rotation_inverses[shot.id] = r
-            return r
-
-    def _shot_Rt(self, shot: pymap.Shot) -> NDArray:
-        if shot.id in self.Rts:
-            return self.Rts[shot.id]
-        else:
-            r = shot.pose.get_Rt()
-            self.Rts[shot.id] = r
-            return r
-
-
-def triangulate_shot_features(
-    tracks_manager: pymap.TracksManager,
-    reconstruction: types.Reconstruction,
-    shot_ids: Set[str],
-    config: Dict[str, Any],
-) -> List[str]:
-    """Reconstruct as many tracks seen in shot_id as possible."""
-    reproj_threshold = config["triangulation_threshold"]
-    min_ray_angle = config["triangulation_min_ray_angle"]
-    min_depth = config["triangulation_min_depth"]
-    refinement_iterations = config["triangulation_refinement_iterations"]
-
-    triangulator = TrackTriangulator(
-        reconstruction, TrackHandlerTrackManager(
-            tracks_manager, reconstruction)
-    )
-
-    all_shots_ids = set(tracks_manager.get_shot_ids())
-    tracks_ids = {
-        t
-        for s in shot_ids
-        if s in all_shots_ids
-        for t in tracks_manager.get_shot_observations(s)
-    }
-
-    created_tracks = []
-    for track in tracks_ids:
-        if track not in reconstruction.points:
-            if config["triangulation_type"] == "ROBUST":
-                if (triangulator.triangulate_robust(
-                    track,
-                    reproj_threshold,
-                    min_ray_angle,
-                    min_depth,
-                    refinement_iterations,
-                )):
-                    created_tracks.append(track)
-            elif config["triangulation_type"] == "FULL":
-                if (triangulator.triangulate(
-                    track,
-                    reproj_threshold,
-                    min_ray_angle,
-                    min_depth,
-                    refinement_iterations,
-                )):
-                    created_tracks.append(track)
-    return created_tracks
-
-
 def retriangulate(
     tracks_manager: pymap.TracksManager,
     reconstruction: types.Reconstruction,
@@ -1029,68 +663,16 @@ def retriangulate(
     report = {}
     report["num_points_before"] = len(reconstruction.points)
 
-    if config["triangulation_type"] == "FULL":
-        reconstruction.points = {}
-        pysfm.reconstruct_from_tracks_manager(
-            reconstruction.map, tracks_manager, config
-        )
-    else:
-        threshold = config["triangulation_threshold"]
-        min_ray_angle = config["triangulation_min_ray_angle"]
-        min_depth = config["triangulation_min_depth"]
-        refinement_iterations = config["triangulation_refinement_iterations"]
-
-        reconstruction.points = {}
-
-        all_shots_ids = set(tracks_manager.get_shot_ids())
-
-        triangulator = TrackTriangulator(
-            reconstruction, TrackHandlerTrackManager(
-                tracks_manager, reconstruction)
-        )
-        tracks = set()
-        for image in reconstruction.shots.keys():
-            if image in all_shots_ids:
-                tracks.update(
-                    tracks_manager.get_shot_observations(image).keys())
-        for track in tracks:
-            if config["triangulation_type"] == "ROBUST":
-                triangulator.triangulate_robust(
-                    track, threshold, min_ray_angle, min_depth, refinement_iterations
-                )
-            else:
-                raise ValueError(
-                    f"This should be handled before in CPP: {config['triangulation_type']}"
-                )
+    use_robust = config["triangulation_type"] == "ROBUST"
+    reconstruction.points = {}
+    pysfm.reconstruct_from_tracks_manager(
+        reconstruction.map, tracks_manager, config, use_robust
+    )
 
     report["num_points_after"] = len(reconstruction.points)
     chrono.lap("retriangulate")
     report["wall_time"] = chrono.total_time()
     return report
-
-
-def get_error_distribution(points: Dict[str, pymap.Landmark]) -> Tuple[float, float]:
-    all_errors = []
-    for track in points.values():
-        all_errors += track.reprojection_errors.values()
-    robust_mean = np.median(all_errors, axis=0)
-    robust_std = 1.486 * np.median(
-        np.linalg.norm(np.array(all_errors) - robust_mean, axis=1)
-    )
-    return robust_mean, robust_std
-
-
-def get_actual_threshold(
-    config: Dict[str, Any], points: Dict[str, pymap.Landmark]
-) -> float:
-    filter_type = config["bundle_outlier_filtering_type"]
-    if filter_type == "FIXED":
-        return config["bundle_outlier_fixed_threshold"]
-    elif filter_type == "AUTO":
-        mean, std = get_error_distribution(points)
-        return config["bundle_outlier_auto_ratio"] * np.linalg.norm(mean + std)
-    else:
-        return 1.0
 
 
 def remove_outliers(
@@ -1236,122 +818,6 @@ def paint_reconstruction(
         )
 
 
-class ShouldBundle:
-    """Helper to keep track of when to run bundle."""
-
-    interval: int
-    new_points_ratio: float
-    reconstruction: types.Reconstruction
-
-    def __init__(self, data: DataSetBase, reconstruction: types.Reconstruction) -> None:
-        self.interval = data.config["bundle_interval"]
-        self.new_points_ratio = data.config["bundle_new_points_ratio"]
-        self.reconstruction = reconstruction
-        self.done()
-
-    def should(self) -> bool:
-        max_points = self.num_points_last * self.new_points_ratio
-        max_shots = self.num_shots_last + self.interval
-        return (
-            len(self.reconstruction.points) >= max_points
-            or len(self.reconstruction.shots) >= max_shots
-        )
-
-    def done(self) -> None:
-        self.num_points_last = len(self.reconstruction.points)
-        self.num_shots_last = len(self.reconstruction.shots)
-
-
-class ShouldRetriangulate:
-    """Helper to keep track of when to re-triangulate."""
-
-    active: bool
-    ratio: float
-    reconstruction: types.Reconstruction
-
-    def __init__(self, data: DataSetBase, reconstruction: types.Reconstruction) -> None:
-        self.active = data.config["retriangulation"]
-        self.ratio = data.config["retriangulation_ratio"]
-        self.reconstruction = reconstruction
-        self.done()
-
-    def should(self) -> bool:
-        max_points = self.num_points_last * self.ratio
-        return self.active and len(self.reconstruction.points) > max_points
-
-    def done(self) -> None:
-        self.num_points_last = len(self.reconstruction.points)
-
-
-class ResectionCandidates:
-    """Helper to keep track of resection candidates."""
-
-    def __init__(self, tracks_manager: pymap.TracksManager, reconstruction: types.Reconstruction) -> None:
-        self.tracks_manager = tracks_manager
-        self.reconstruction = reconstruction
-        self.candidates: Dict[str, Set[str]] = {}
-        self.tracks = set()
-
-    def update(self, reconstruction: types.Reconstruction) -> None:
-        """Update candidates based on a new reconstruction."""
-        self.reconstruction = reconstruction
-        rec_tracks = set(reconstruction.points.keys())
-
-        # add new tracks
-        for track_id in rec_tracks:
-            if track_id not in self.tracks:
-                self.tracks.add(track_id)
-                for shot_id in self.tracks_manager.get_track_observations(track_id):
-                    if shot_id not in self.candidates:
-                        self.candidates[shot_id] = set()
-                    self.candidates[shot_id].add(track_id)
-
-        # remove tracks that are not in the reconstruction
-        to_remove = set()
-        for track_id in self.tracks:
-            if track_id not in rec_tracks:
-                for shot_id, shot_candidates in self.candidates.items():
-                    if track_id in shot_candidates:
-                        shot_candidates.remove(track_id)
-                to_remove.add(track_id)
-
-        for track_id in to_remove:
-            self.tracks.remove(track_id)
-
-    def add(self, shots: List[str], tracks: Set[str]) -> None:
-        """Add newly resected tracks and the shots they belong to."""
-        for shot_id in shots:
-            if shot_id in self.candidates:
-                del self.candidates[shot_id]
-
-        for track_id in tracks:
-            self.tracks.add(track_id)
-            for shot_id in self.tracks_manager.get_track_observations(track_id):
-                if shot_id in self.reconstruction.shots:
-                    continue
-                if shot_id not in self.candidates:
-                    self.candidates[shot_id] = set()
-                self.candidates[shot_id].add(track_id)
-
-    def remove(self, outliers: List[Tuple[str, str]], removed_tracks: List[str]) -> None:
-        """Remove outliers from candidates."""
-        for shot_id, track_id in outliers:
-            if shot_id in self.candidates and track_id in self.candidates[shot_id]:
-                self.candidates[shot_id].remove(track_id)
-                if not self.candidates[shot_id]:
-                    del self.candidates[shot_id]
-
-        for track_id in removed_tracks:
-            for shot_id, shot_candidates in self.candidates.items():
-                if track_id in shot_candidates:
-                    shot_candidates.remove(track_id)
-            self.tracks.discard(track_id)
-
-    def get_candidates(self, images: Set[str]) -> List[Tuple[str, int]]:
-        """Get sorted candidates for resection."""
-        return [(k, len(v)) for k, v in filter(lambda x: x[0] in images, sorted(self.candidates.items(), key=lambda x: -len(x[1])))]
-
-
 def grow_reconstruction(
     data: DataSetBase,
     tracks_manager: pymap.TracksManager,
@@ -1382,9 +848,16 @@ def grow_reconstruction(
         exif = data.load_exif(image)
         shot_camera_map[image] = exif["camera"]
 
-    # Build rig assignments for C++
+    # Also include rig member shots that might not be in images (no tracks)
     rig_assignments_raw = rig.rig_assignments_per_image(
         data.load_rig_assignments())
+    for shot_id, (instance_id, rig_camera_id, instance_shots) in rig_assignments_raw.items():
+        for member_shot in instance_shots:
+            if member_shot not in shot_camera_map:
+                exif = data.load_exif(member_shot)
+                shot_camera_map[member_shot] = exif["camera"]
+
+    # Build rig assignments for C++
     rig_assignments_cpp = {}
     for shot_id, (instance_id, rig_camera_id, instance_shots) in rig_assignments_raw.items():
         ra = pysfm.RigAssignment()
@@ -1473,40 +946,19 @@ def triangulation_reconstruction(
     config = data.config
     config_override = config.copy()
     config_override["triangulation_type"] = "ROBUST"
-    config_override["bundle_max_iterations"] = 10
-    bundle_grid = config["final_bundle_grid"]
+    config_override["bundle_max_iterations"] = 50
+    bundle_grid = config["local_bundle_grid"]
 
-    report["steps"] = []
-    outer_iterations = 3
-    inner_iterations = 5
-    for i in range(outer_iterations):
-        rrep = retriangulate(tracks_manager, reconstruction, config_override)
-        triangulated_points = rrep["num_points_after"]
-        logger.info(
-            f"Triangulation SfM. Outer iteration {i}, triangulated {triangulated_points} points."
-        )
-
-        for j in range(inner_iterations):
-            if config_override["save_partial_reconstructions"]:
-                paint_reconstruction(data, tracks_manager, reconstruction)
-                data.save_reconstruction(
-                    [reconstruction], f"reconstruction.{i * inner_iterations + j}.json"
-                )
-
-            step = {}
-            logger.info(
-                f"Triangulation SfM. Inner iteration {j}, running bundle ...")
-            align_reconstruction(reconstruction, [], config_override)
-            b1rep = bundle(
-                reconstruction, camera_priors, rig_camera_priors, None, bundle_grid, config_override
-            )
-            remove_outliers(reconstruction, config_override)
-            step["bundle"] = b1rep
-            step["retriangulation"] = rrep
-            report["steps"].append(step)
+    # Core loop in C++
+    loop_report = pysfm.ReconstructionGrower.triangulation_reconstruction(
+        reconstruction.map, tracks_manager, dict(
+            camera_priors), dict(rig_camera_priors),
+        bundle_grid, reconstruction, config_override,
+        outer_iterations=3, inner_iterations=2,
+    )
+    report["loop"] = loop_report
 
     logger.info("Triangulation SfM done.")
-    logger.info("-------------------------------------------------------")
     chrono.lap("compute_reconstructions")
     report["wall_times"] = dict(chrono.lap_times())
 
@@ -1720,8 +1172,7 @@ def reconstruct_from_prior(
     rec_report["num_remaining_images"] = len(remaining_images)
 
     # Start with the known poses
-    triangulate_shot_features(
-        tracks_manager, reconstruction, prior_images, data.config)
+    retriangulate(tracks_manager, reconstruction, data.config)
     paint_reconstruction(data, tracks_manager, reconstruction)
     report["not_reconstructed_images"] = list(remaining_images)
     return report, reconstruction

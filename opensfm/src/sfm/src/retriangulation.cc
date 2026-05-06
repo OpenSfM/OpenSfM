@@ -134,7 +134,7 @@ void RealignMaps(const map::Map& map_from, map::Map& map_to,
 
 void ReconstructFromTracksManager(map::Map& map,
                                   const map::TracksManager& tracks_manager,
-                                  const py::dict& config) {
+                                  const py::dict& config, bool use_robust) {
   foundation::ScopedMallocArena scoped_malloc_arena;
 
   const float triangulation_threshold =
@@ -160,10 +160,12 @@ void ReconstructFromTracksManager(map::Map& map,
   std::shuffle(track_ids.begin(), track_ids.end(),
                std::mt19937{std::random_device{}()});
 
-  // Helper lambda to process a single track
+  // Helper lambda to process a single track.
+  // When use_robust=true, track_obs is filtered to only contain inliers.
   auto process_track =
       [&](const map::TrackId& track_id,
           std::vector<std::pair<map::Shot*, map::ObservationIndex>>& track_obs,
+          std::vector<std::pair<map::Shot*, map::ObservationIndex>>& inlier_obs,
           std::vector<double>& thresholds, MatX3d& origins,
           MatX3d& bearings) -> std::pair<bool, Vec3d> {
     const auto idx_dict = tracks_manager.GetTrackObservationIndices(track_id);
@@ -183,10 +185,6 @@ void ReconstructFromTracksManager(map::Map& map,
     }
 
     const size_t track_size = track_obs.size();
-    if (thresholds.size() < track_size) {
-      thresholds.resize(track_size, triangulation_threshold);
-    }
-
     if (static_cast<size_t>(origins.rows()) < track_size) {
       origins.resize(track_size, 3);
       bearings.resize(track_size, 3);
@@ -198,17 +196,38 @@ void ReconstructFromTracksManager(map::Map& map,
           track_obs[j].first->Bearing(pool->Get(track_obs[j].second).point);
     }
 
-    auto res = geometry::TriangulateBearingsMidpoint(
-        origins.topRows(track_size), bearings.topRows(track_size), thresholds,
-        min_angle_rad, min_depth);
-
-    if (res.first) {
-      Vec3d refined = geometry::PointRefinement(
-          origins.topRows(track_size), bearings.topRows(track_size), res.second,
-          refinement_iterations);
-      return {true, refined};
+    if (use_robust) {
+      auto [success, point, inlier_indices] =
+          geometry::TriangulateBearingsRobust(
+              origins.topRows(track_size), bearings.topRows(track_size),
+              triangulation_threshold, min_angle_rad, min_depth,
+              refinement_iterations);
+      if (!success) {
+        return {false, Vec3d::Zero()};
+      }
+      // Filter track_obs to only inliers, reusing the inlier_obs buffer
+      inlier_obs.clear();
+      inlier_obs.reserve(inlier_indices.size());
+      for (int idx : inlier_indices) {
+        inlier_obs.push_back(track_obs[idx]);
+      }
+      std::swap(track_obs, inlier_obs);
+      return {true, point};
+    } else {
+      if (thresholds.size() < track_size) {
+        thresholds.resize(track_size, triangulation_threshold);
+      }
+      auto res = geometry::TriangulateBearingsMidpoint(
+          origins.topRows(track_size), bearings.topRows(track_size), thresholds,
+          min_angle_rad, min_depth);
+      if (res.first) {
+        Vec3d refined = geometry::PointRefinement(
+            origins.topRows(track_size), bearings.topRows(track_size),
+            res.second, refinement_iterations);
+        return {true, refined};
+      }
+      return {false, Vec3d::Zero()};
     }
-    return {false, Vec3d::Zero()};
   };
 
   foundation::ConcurrentQueue<TriangulationResult> queue;
@@ -225,12 +244,13 @@ void ReconstructFromTracksManager(map::Map& map,
     std::vector<double> thresholds;
     MatX3d origins, bearings;
     std::vector<std::pair<map::Shot*, map::ObservationIndex>> track_obs;
+    std::vector<std::pair<map::Shot*, map::ObservationIndex>> inlier_obs;
 
     if (num_threads == 1) {
       // Sequential fallback
       for (const auto& track_id : track_ids) {
-        auto res =
-            process_track(track_id, track_obs, thresholds, origins, bearings);
+        auto res = process_track(track_id, track_obs, inlier_obs, thresholds,
+                                 origins, bearings);
         if (res.first) {
           auto& landmark = map.CreateLandmark(track_id, res.second);
           for (const auto& shot_n_obs : track_obs) {
@@ -260,8 +280,8 @@ void ReconstructFromTracksManager(map::Map& map,
         for (size_t i = thread_id - 1; i < track_ids.size();
              i += (num_threads - 1)) {
           const auto& track_id = track_ids[i];
-          auto res =
-              process_track(track_id, track_obs, thresholds, origins, bearings);
+          auto res = process_track(track_id, track_obs, inlier_obs, thresholds,
+                                   origins, bearings);
           if (res.first) {
             queue.Push({track_id, res.second, track_obs});
           }

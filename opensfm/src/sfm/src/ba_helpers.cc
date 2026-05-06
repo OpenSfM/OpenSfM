@@ -137,14 +137,15 @@ std::unordered_set<map::Shot*> BAHelpers::DirectShotNeighbors(
   return neighbors;
 }
 
-py::tuple BAHelpers::BundleLocal(
+BAHelpers::BundleLocalResult BAHelpers::BundleLocal(
     map::Map& map,
     const std::unordered_map<map::CameraId, geometry::Camera>& camera_priors,
     const std::unordered_map<map::RigCameraId, map::RigCamera>&
         rig_camera_priors,
     const AlignedVector<map::GroundControlPoint>& gcp,
     const map::ShotId& central_shot_id, int grid_size, const py::dict& config) {
-  py::dict report;
+  BundleLocalResult result;
+  py::dict& report = result.report;
 
   const auto timer_neighborhood_start =
       std::chrono::high_resolution_clock::now();
@@ -267,7 +268,6 @@ py::tuple BAHelpers::BundleLocal(
 
   // Run over selected tracks only and add all their observations
   std::unordered_set<map::Landmark*> points;
-  py::list pt_ids;
   size_t added_landmarks = 0;
   size_t added_reprojections = 0;
   for (const auto& selected_track_id : subset) {
@@ -276,7 +276,7 @@ py::tuple BAHelpers::BundleLocal(
     auto* ba_point = ba.AddPoint(lm.id_, lm.GetGlobalPos(), point_constant);
 
     points.insert(&lm);
-    pt_ids.append(lm.id_);
+    result.point_ids.push_back(lm.id_);
     ++added_landmarks;
 
     for (const auto& obs_pair : lm.GetObservations()) {
@@ -415,7 +415,23 @@ py::tuple BAHelpers::BundleLocal(
       map.NumberOfShots() - interior.size() - boundary.size();
   report["num_points"] = added_landmarks;
   report["num_reprojections"] = added_reprojections;
-  return py::make_tuple(pt_ids, report);
+  return result;
+}
+
+py::tuple BAHelpers::BundleLocalPython(
+    map::Map& map,
+    const std::unordered_map<map::CameraId, geometry::Camera>& camera_priors,
+    const std::unordered_map<map::RigCameraId, map::RigCamera>&
+        rig_camera_priors,
+    const AlignedVector<map::GroundControlPoint>& gcp,
+    const map::ShotId& central_shot_id, int grid_size, const py::dict& config) {
+  auto result = BundleLocal(map, camera_priors, rig_camera_priors, gcp,
+                            central_shot_id, grid_size, config);
+  py::list pt_ids;
+  for (const auto& id : result.point_ids) {
+    pt_ids.append(id);
+  }
+  return py::make_tuple(pt_ids, result.report);
 }
 
 bool BAHelpers::TriangulateGCP(
@@ -1252,26 +1268,28 @@ bundle::SimilarityParameterMask BAHelpers::DetermineGCPBiasParameters(
   return Mask::All;
 }
 
-py::tuple BAHelpers::RemoveOutliers(
+BAHelpers::OutlierRemovalResult BAHelpers::RemoveOutliers(
     map::Map& map, const py::dict& config,
     const std::vector<map::LandmarkId>& point_ids) {
-  // Determine which points to process
+  OutlierRemovalResult result;
   const auto& all_landmarks = map.GetLandmarks();
-  std::vector<const map::Landmark*> points_to_check;
-  if (point_ids.empty()) {
-    points_to_check.reserve(all_landmarks.size());
-    for (const auto& [id, lm] : all_landmarks) {
-      points_to_check.push_back(&lm);
-    }
-  } else {
-    points_to_check.reserve(point_ids.size());
-    for (const auto& pid : point_ids) {
-      auto it = all_landmarks.find(pid);
-      if (it != all_landmarks.end()) {
-        points_to_check.push_back(&it->second);
+
+  // Generic iteration: avoid building a temporary vector of pointers.
+  // for_each_point calls fn(const Landmark&) on the relevant set.
+  auto for_each_point = [&](auto&& fn) {
+    if (point_ids.empty()) {
+      for (const auto& [id, lm] : all_landmarks) {
+        fn(lm);
+      }
+    } else {
+      for (const auto& pid : point_ids) {
+        auto it = all_landmarks.find(pid);
+        if (it != all_landmarks.end()) {
+          fn(it->second);
+        }
       }
     }
-  }
+  };
 
   // Compute threshold
   const std::string filter_type =
@@ -1336,28 +1354,29 @@ py::tuple BAHelpers::RemoveOutliers(
           : 0.5;
 
   // Collect outliers
-  std::vector<std::pair<map::LandmarkId, map::ShotId>> outliers;
-  for (const auto* lm : points_to_check) {
-    for (const auto& [shot_id, error] : lm->GetReprojectionErrors()) {
+  for_each_point([&](const map::Landmark& lm) {
+    for (const auto& [shot_id, error] : lm.GetReprojectionErrors()) {
       double err_sqr = error[0] * error[0] + error[1] * error[1];
       if (err_sqr > threshold_sqr) {
-        outliers.emplace_back(lm->id_, shot_id);
+        result.outliers.emplace_back(lm.id_, shot_id);
       }
     }
-    for (const auto& [shot_id, weight] : lm->GetReprojectionWeights()) {
+    for (const auto& [shot_id, weight] : lm.GetReprojectionWeights()) {
       if (weight < weight_threshold) {
-        outliers.emplace_back(lm->id_, shot_id);
+        result.outliers.emplace_back(lm.id_, shot_id);
       }
     }
-  }
+  });
 
   // Deduplicate
-  std::sort(outliers.begin(), outliers.end());
-  outliers.erase(std::unique(outliers.begin(), outliers.end()), outliers.end());
+  std::sort(result.outliers.begin(), result.outliers.end());
+  result.outliers.erase(
+      std::unique(result.outliers.begin(), result.outliers.end()),
+      result.outliers.end());
 
   // Remove observations and collect affected tracks
   std::unordered_set<map::LandmarkId> affected_tracks;
-  for (const auto& [track_id, shot_id] : outliers) {
+  for (const auto& [track_id, shot_id] : result.outliers) {
     if (all_landmarks.find(track_id) != all_landmarks.end()) {
       map.RemoveObservation(shot_id, track_id);
       affected_tracks.insert(track_id);
@@ -1365,13 +1384,12 @@ py::tuple BAHelpers::RemoveOutliers(
   }
 
   // Remove landmarks with < 2 observations
-  std::vector<map::LandmarkId> removed_tracks;
   for (const auto& track_id : affected_tracks) {
     auto it = map.GetLandmarks().find(track_id);
     if (it != map.GetLandmarks().end()) {
       if (it->second.NumberOfObservations() < 2) {
         map.RemoveLandmark(track_id);
-        removed_tracks.push_back(track_id);
+        result.removed_tracks.push_back(track_id);
       }
     }
   }
@@ -1382,16 +1400,22 @@ py::tuple BAHelpers::RemoveOutliers(
     lm.SetReprojectionWeights({});
   }
 
-  // Build Python return values
+  return result;
+}
+
+py::tuple BAHelpers::RemoveOutliersPython(
+    map::Map& map, const py::dict& config,
+    const std::vector<map::LandmarkId>& point_ids) {
+  auto result = RemoveOutliers(map, config, point_ids);
+
   py::list py_outliers;
-  for (const auto& [track_id, shot_id] : outliers) {
+  for (const auto& [track_id, shot_id] : result.outliers) {
     py_outliers.append(py::make_tuple(track_id, shot_id));
   }
   py::set py_removed;
-  for (const auto& tid : removed_tracks) {
+  for (const auto& tid : result.removed_tracks) {
     py_removed.add(py::cast(tid));
   }
-
   return py::make_tuple(py_outliers, py_removed);
 }
 }  // namespace sfm

@@ -7,6 +7,8 @@
 #include <Eigen/SVD>
 #include <Eigen/StdVector>
 #include <cassert>
+#include <tuple>
+#include <vector>
 
 namespace geometry {
 
@@ -47,6 +49,12 @@ MatXd EpipolarAngleTwoBearingsMany(const MatX3d& bearings1,
 
 Vec3d PointRefinement(const MatX3d& centers, const MatX3d& bearings,
                       const Vec3d& point, int iterations);
+
+/// Robust triangulation using RANSAC over bearing rays.
+/// Returns (success, 3D_point, inlier_indices).
+std::tuple<bool, Vec3d, std::vector<int>> TriangulateBearingsRobust(
+    const MatX3d& centers, const MatX3d& bearings, double threshold,
+    double min_angle, double min_depth, int refinement_iterations);
 
 // Template implementations
 

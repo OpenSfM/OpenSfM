@@ -5,6 +5,8 @@
 #include <foundation/types.h>
 #include <geometry/transformations_functions.h>
 #include <geometry/triangulation.h>
+#include <robust/robust_estimator.h>
+#include <robust/triangulation_model.h>
 
 #include <cmath>
 
@@ -232,6 +234,71 @@ Vec3d PointRefinement(const MatX3d& centers, const MatX3d& bearings,
   solver.options.max_num_iterations = iterations;
   solver.Solve(f, &refined);
   return refined;
+}
+
+std::tuple<bool, Vec3d, std::vector<int>> TriangulateBearingsRobust(
+    const MatX3d& centers, const MatX3d& bearings, double threshold,
+    double min_angle, double min_depth, int refinement_iterations) {
+  const int n = static_cast<int>(centers.rows());
+  if (n < 2) {
+    return {false, Vec3d::Zero(), {}};
+  }
+
+  // Check angle between any pair of rays
+  bool angle_ok = false;
+  for (int i = 0; i < n && !angle_ok; ++i) {
+    for (int j = 0; j < i && !angle_ok; ++j) {
+      const double angle =
+          AngleBetweenVectors(bearings.row(i), bearings.row(j));
+      if (angle >= min_angle && angle <= M_PI - min_angle) {
+        angle_ok = true;
+      }
+    }
+  }
+  if (!angle_ok) {
+    return {false, Vec3d::Zero(), {}};
+  }
+
+  // Build samples
+  std::vector<Triangulation::Data> samples(n);
+  for (int i = 0; i < n; ++i) {
+    samples[i].first = centers.row(i);
+    samples[i].second = bearings.row(i).normalized();
+  }
+
+  // Run RANSAC using header-only template machinery
+  RobustEstimatorParams params;
+  params.iterations = 1000;
+  params.use_iteration_reduction = true;
+  auto result =
+      RunEstimation<Triangulation>(samples, threshold, params, RANSAC);
+
+  if (result.inliers_indices.size() < 2) {
+    return {false, Vec3d::Zero(), {}};
+  }
+
+  // Refine on inliers
+  const int n_inliers = static_cast<int>(result.inliers_indices.size());
+  MatX3d inlier_centers(n_inliers, 3);
+  MatX3d inlier_bearings(n_inliers, 3);
+  for (int i = 0; i < n_inliers; ++i) {
+    const int idx = result.inliers_indices[i];
+    inlier_centers.row(i) = centers.row(idx);
+    inlier_bearings.row(i) = bearings.row(idx);
+  }
+
+  Vec3d refined = PointRefinement(inlier_centers, inlier_bearings,
+                                  result.lo_model, refinement_iterations);
+
+  // Check depth for all inliers
+  for (int i = 0; i < n_inliers; ++i) {
+    const Vec3d dir = refined - inlier_centers.row(i).transpose();
+    if (dir.dot(inlier_bearings.row(i).transpose()) < min_depth) {
+      return {false, Vec3d::Zero(), {}};
+    }
+  }
+
+  return {true, refined, result.inliers_indices};
 }
 
 }  // namespace geometry
