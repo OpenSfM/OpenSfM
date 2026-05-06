@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, IO, List, Union
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, IO, Union
 
 import yaml
 
@@ -369,34 +369,143 @@ class OpenSfMConfig:
     undistorted_image_max_size: int = 100000
 
     ##################################
-    # Params for depth estimation
+    # Params for depth estimation (PatchMatch OpenCL)
     ##################################
-    # Raw depthmap computation algorithm (PATCH_MATCH, BRUTE_FORCE, PATCH_MATCH_SAMPLE)
-    depthmap_method: str = "PATCH_MATCH_SAMPLE"
-    # Resolution of the depth maps
+    # Resolution of panorama sub-views during undistortion
     depthmap_resolution: int = 640
-    # Number of neighboring views
+    # Number of neighboring views considered as candidates
     depthmap_num_neighbors: int = 10
-    # Number of neighboring views used for each depthmaps
-    depthmap_num_matching_views: int = 6
+    # Number of neighboring views used for each depthmap
+    depthmap_num_matching_views: int = 4
     # Minimum depth in meters.  Set to 0 to auto-infer from the reconstruction.
     depthmap_min_depth: float = 0
     # Maximum depth in meters.  Set to 0 to auto-infer from the reconstruction.
     depthmap_max_depth: float = 0
-    # Number of PatchMatch iterations to run
-    depthmap_patchmatch_iterations: int = 3
-    # Size of the correlation patch
-    depthmap_patch_size: int = 7
-    # Patches with lower standard deviation are ignored
-    depthmap_min_patch_sd: float = 1.0
-    # Minimum correlation score to accept a depth value
-    depthmap_min_correlation_score: float = 0.1
-    # Threshold to measure depth closeness
+    # Maximum number of PatchMatch iterations
+    depthmap_max_iterations: int = 4
+    # Correlation patch size (should be odd, typically 11)
+    depthmap_patch_size: int = 5
+    # Maximum image dimension for processing (longer side)
+    depthmap_max_image_size: int = 3200
+    # Maximum PatchMatch cost to keep a pixel (0 = disabled)
+    depthmap_max_cost: float = 0.9
+    # Threshold to measure depth closeness (clean stage)
     depthmap_same_depth_threshold: float = 0.01
-    # Min number of views that should reconstruct a point for it to be valid
+    # Min number of consistent views in clean stage
     depthmap_min_consistent_views: int = 3
-    # Save debug files with partial reconstruction results
-    depthmap_save_debug_files: bool = False
+    # Relative depth threshold for space-carving in the clean stage:
+    # a neighbor counts as a carve vote when it sees something further
+    # by more than this fraction (e.g., 0.2 = 20% further).
+    depthmap_carving_threshold: float = 0.2
+    # Max number of carve votes a pixel may receive before it is discarded.
+    depthmap_max_carved_views: int = 1
+    # Save per-shot raw/clean PLYs and per-cluster debug PLYs (slow, for debugging only).
+    depthmap_save_debug_ply: bool = False
+    # Spatial sigma for bilateral NCC weighting
+    depthmap_sigma_spatial: float = 5.0
+    # Color sigma for bilateral NCC weighting, in normalized [0,1] intensity units.
+    depthmap_sigma_color: float = 3.0 / 255.0
+    # Weight for Census transform cost vs bilateral NCC (0 = NCC only, 1 = Census only).
+    depthmap_census_weight: float = 0.3
+    # Number of multi-scale hierarchy levels (1 = full-res only, 2 = half+full,  3 = quarter+half+full, etc.).
+    depthmap_hierarchy_levels: int = 4
+    # Depth/normal smoothness weight for PatchMatch
+    depthmap_smooth_weight: float = 0.3
+    # Weight for geometric consistency cost (0 = disabled). Applied per source view.
+    depthmap_geom_consistency_weight: float = 0.05
+    # Maximum number of reference views per cluster for geometric consistency.
+    depthmap_cluster_max_size: int = 8
+    # Use SfM points to seed a Delaunay planar prior before PatchMatch iterations
+    depthmap_sfm_planar_prior: bool = True
+    # Number of shots per incremental fusion batch (controls peak memory).
+    depthmap_fusion_batch_size: int = 50
+    # Minimum number of consistent views for a fused point
+    depthmap_fusion_min_consistent: int = 4
+    # Maximum reprojection error in pixels for fusion consistency
+    depthmap_fusion_max_reproj_error: float = 2.0
+    # Maximum relative depth error for fusion consistency
+    depthmap_fusion_max_depth_error: float = 0.01
+    # Maximum normal angle difference in degrees for fusion consistency
+    depthmap_fusion_max_normal_error: float = 10.0
+    # Border margin in pixels to skip near image edges during fusion
+    depthmap_fusion_border_margin: int = 10
+    # Number of threads for fusion
+    depthmap_fusion_num_threads: int = 8
+    # Statistical Outlier Removal: k-nearest-neighbors count (0 = disabled)
+    depthmap_fusion_sor_knn: int = 0
+    # SOR standard-deviation multiplier (points beyond mean + factor*std removed)
+    depthmap_fusion_sor_stddev_factor: float = 2.5
+    # Behind-depth factor for asymmetric depth tolerance (0.0–1.0).
+    # Scales the depth tolerance on the "behind" side of a source surface.
+    # Lower values reject points that lie behind a known surface more
+    # aggressively, suppressing ghost / double wall artifacts.
+    depthmap_fusion_behind_depth_factor: float = 0.3
+    # Fusion backend: "depthmap" (classic per-pixel) or "svo" (TSDF voxel).
+    # The SVO backend naturally suppresses double-wall artifacts.
+    depthmap_fusion_backend: str = "svo"
+    # SVO voxel size in world units (meters). Smaller = finer but more memory.
+    depthmap_fusion_svo_voxel_size: float = 0.05
+    # SVO truncation factor: truncation_distance = factor * voxel_size.
+    depthmap_fusion_svo_trunc_factor: float = 12
+    # SVO minimum weight for extracting points
+    depthmap_fusion_svo_min_weight: float = 4
+    # Maximum unique voxels per SVO sub-volume.
+    # Clusters are spatially split so each piece stays within this budget.
+    # The GPU hash table is sized to 2x this (50% load factor).
+    # Lower = more sub-volumes but guaranteed GPU memory fit.
+    depthmap_fusion_svo_max_voxels: int = 80_000_000
+    # Number of extra neighbor shots per cluster shot for fusion augmentation.
+    # Adds views from outside the cluster to improve boundary quality.
+    depthmap_fusion_svo_augment_neighbors: int = 2
+    # Coarse grid cell size multiplier for pre-scan (cell = factor * voxel_size).
+    depthmap_fusion_svo_coarse_factor: int = 8
+    # Relative margin added to each side of the per-cluster bounding box
+    depthmap_cluster_bbox_margin: float = 0.01
+
+    ##################################
+    # Params for octree point cloud tiling (viewer streaming)
+    ##################################
+    # Maximum number of points stored in a single octree tile
+    octree_max_points_per_tile: int = 50000
+    # Maximum octree depth (root = 0)
+    octree_max_depth: int = 15
+    # Number of LOD representative points kept in each inner (non-leaf) tile
+    octree_lod_sample_count: int = 10000
+
+    ##################################
+    # Params for DSM (Digital Surface Model) generation
+    ##################################
+    # Ground sample distance in meters/pixel. 0 = auto from voxel size.
+    dsm_gsd: float = 0.0
+    # Outlier rejection threshold in meters: points farther from the
+    # pass-1 weighted mean are discarded in the second scatter pass.
+    dsm_outlier_threshold: float = 1.0
+    # Minimum number of depthmap pixel contributions per cell.  Cells with
+    # fewer observations become nodata, filtering sparse/rogue pixels.
+    dsm_min_count: int = 3
+    # Exponential Z-bias (softmax) for the second scatter pass.  Upweights
+    # above-mean observations to approximate an upper percentile, reducing
+    # concavity bleeding at courtyards and overhangs.
+    #   0   = plain weighted mean (no bias)
+    #   2.5 = approximate P90 (default)
+    #   5+  = approaches pure max
+    dsm_z_bias: float = 2.5
+    # Enable edge-preserving bilateral smoothing on the DSM grid.
+    dsm_bilateral_enabled: bool = True
+    # Bilateral filter spatial radius in pixels.
+    dsm_bilateral_spatial: int = 2
+    # Bilateral filter range sigma in meters.
+    dsm_bilateral_range: float = 0.3
+    # Fill small holes in the DSM via iterative nearest-neighbor dilation.
+    dsm_fill_holes: bool = True
+    # Maximum dilation radius (in pixels) for small-hole filling.
+    dsm_fill_max_radius: int = 3
+    # Use Delaunay triangulation to fill larger interior holes after dilation.
+    dsm_fill_triangulate: bool = True
+    # Percentile for per-cell Z selection (0.5 = median, 0.9 = P90).
+    dsm_percentile: float = 0.75
+    # Post-process median filter radius (0 = disabled, 1 = 3x3, 2 = 5x5).
+    dsm_median_radius: int = 1
 
     ##################################
     # Params for multi-processing/threading
@@ -404,7 +513,7 @@ class OpenSfMConfig:
     # Number of threads to use
     processes: int = 1
     # When processes > 1, number of threads used for reading images
-    read_processes: int = 4
+    io_processes: int = 4
 
     ##################################
     # Params for submodel split and merge

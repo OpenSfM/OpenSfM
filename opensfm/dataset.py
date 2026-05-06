@@ -4,14 +4,16 @@ import json
 import logging
 import os
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import config, features, geo, io, masking, pygeometry, pymap, rig, types
+from opensfm import config, features, geo, io, masking, pygeometry, pymap, rig, types, pysfm
 from opensfm.dataset_base import DataSetBase
 from PIL.PngImagePlugin import PngImageFile
+from lz4 import frame as lz4_frame
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -813,6 +815,36 @@ class UndistortedDataSet:
         self.io_handler.mkdir_p(self._undistorted_mask_path())
         self.io_handler.imwrite(self._undistorted_mask_file(image), array)
 
+    def _undistorted_validity_mask_path(self) -> str:
+        return os.path.join(self.data_path, "validity_masks")
+
+    def _undistorted_validity_mask_file(self, image: str) -> str:
+        """Path of undistorted validity mask for an image."""
+        return os.path.join(
+            self._undistorted_validity_mask_path(), image + ".png"
+        )
+
+    def undistorted_validity_mask_exists(self, image: str) -> bool:
+        """Check if the undistorted validity mask file exists."""
+        return self.io_handler.isfile(
+            self._undistorted_validity_mask_file(image)
+        )
+
+    def load_undistorted_validity_mask(self, image: str) -> NDArray:
+        """Load undistorted validity mask as a numpy array."""
+        return self.io_handler.imread(
+            self._undistorted_validity_mask_file(image), grayscale=True
+        )
+
+    def save_undistorted_validity_mask(
+        self, image: str, array: NDArray
+    ) -> None:
+        """Save the undistorted validity mask."""
+        self.io_handler.mkdir_p(self._undistorted_validity_mask_path())
+        self.io_handler.imwrite(
+            self._undistorted_validity_mask_file(image), array
+        )
+
     def _undistorted_segmentation_path(self) -> str:
         return os.path.join(self.data_path, "segmentations")
 
@@ -883,6 +915,46 @@ class UndistortedDataSet:
             smask = self.load_undistorted_segmentation_mask(image)
         return masking.combine_masks(mask, smask)
 
+    def clusters_file(self) -> str:
+        return os.path.join(self.data_path, "clusters.json")
+
+    def clusters_points_file(self) -> str:
+        return os.path.join(self.data_path, "clusters_points.json")
+
+    def load_clusters(self) -> List[List[str]]:
+        with self.io_handler.open_rt(self.clusters_file()) as fin:
+            cluster_dict = io.json_load(fin)
+        return [cluster_dict[ci] for ci in sorted(cluster_dict.keys())]
+
+    def save_clusters(self, clusters: List[List[str]]) -> None:
+        cluster_dict = {str(i): cluster for i, cluster in enumerate(clusters)}
+        with self.io_handler.open_wt(self.clusters_file()) as fout:
+            io.json_dump(cluster_dict, fout)
+
+    def load_clusters_points(self) -> List[pysfm.SuperPoint]:
+        with self.io_handler.open_rt(self.clusters_points_file()) as fin:
+            clusters_points_list = io.json_load(fin)["clusters_points"]
+            clusters_points = []
+            for points_dict in clusters_points_list:
+                superpoint = pysfm.SuperPoint()
+                superpoint.coord = np.array(
+                    points_dict["coord"], dtype=np.float32)
+                superpoint.vis = points_dict["vis"]
+                superpoint.tracks = points_dict["tracks"]
+                clusters_points.append(superpoint)
+        return clusters_points
+
+    def save_clusters_points(self, cluster_points: List[pysfm.SuperPoint]) -> None:
+        with self.io_handler.open_wt(self.clusters_points_file()) as fout:
+            clusters_points_list = []
+            for points in cluster_points:
+                clusters_points_list.append({
+                    "coord": points.coord.tolist(),
+                    "vis": points.vis,
+                    "tracks": points.tracks,
+                })
+            io.json_dump({"clusters_points": clusters_points_list}, fout)
+
     def _depthmap_path(self) -> str:
         return os.path.join(self.data_path, "depthmaps")
 
@@ -896,7 +968,7 @@ class UndistortedDataSet:
     def load_point_cloud(
         self, filename: str = "merged.ply"
     ) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
-        with self.io_handler.open_rt(self.point_cloud_file(filename)) as fp:
+        with self.io_handler.open_rb(self.point_cloud_file(filename)) as fp:
             return io.point_cloud_from_ply(fp)
 
     def save_point_cloud(
@@ -908,8 +980,85 @@ class UndistortedDataSet:
         filename: str = "merged.ply",
     ) -> None:
         self.io_handler.mkdir_p(self._depthmap_path())
-        with self.io_handler.open_wt(self.point_cloud_file(filename)) as fp:
+        with self.io_handler.open_wb(self.point_cloud_file(filename)) as fp:
             io.point_cloud_to_ply(points, normals, colors, labels, fp)
+
+    def dsm_file(self) -> str:
+        return os.path.join(self._depthmap_path(), "dsm.tif")
+
+    def save_dsm(
+        self,
+        grid: NDArray,
+        origin_x: float,
+        origin_y: float,
+        gsd: float,
+        reference: Optional["geo.TopocentricConverter"] = None,
+    ) -> None:
+        """Save a DSM grid as a GeoTIFF.
+
+        Args:
+            grid: (H, W) float32 array. NaN = no data.
+            origin_x: X coordinate of the left edge of the grid.
+            origin_y: Y coordinate of the bottom edge of the grid.
+            gsd: ground sample distance in world units per pixel.
+            reference: topocentric reference for CRS (UTM). None = no CRS.
+        """
+        from osgeo import gdal, osr
+
+        self.io_handler.mkdir_p(self._depthmap_path())
+        path = self.dsm_file()
+        h, w = grid.shape
+
+        driver = gdal.GetDriverByName("GTiff")
+        ds = driver.Create(path, w, h, 1, gdal.GDT_Float32)
+
+        # GeoTransform: (top-left X, pixel width, 0, top-left Y, 0, -pixel height)
+        # origin_y is bottom edge, so top-left Y = origin_y + H * gsd
+        top_left_y = origin_y + h * gsd
+        ds.SetGeoTransform((origin_x, gsd, 0.0, top_left_y, 0.0, -gsd))
+
+        # Set CRS if reference available.
+        if reference is not None:
+            srs = osr.SpatialReference()
+            utm_zone = int((reference.lon + 180.0) / 6.0) + 1
+            north = reference.lat >= 0.0
+            srs.SetUTM(utm_zone, north)
+            srs.SetWellKnownGeogCS("WGS84")
+            ds.SetProjection(srs.ExportToWkt())
+
+        band = ds.GetRasterBand(1)
+        nodata = -9999.0
+        band.SetNoDataValue(nodata)
+
+        # Replace NaN with nodata value.
+        out = np.where(np.isnan(grid), nodata, grid).astype(np.float32)
+        # Flip vertically: GeoTIFF row 0 = top, our grid row 0 = bottom.
+        band.WriteArray(np.flipud(out))
+        band.FlushCache()
+        ds = None  # close file
+
+    def load_dsm(self) -> Tuple[NDArray, Tuple[float, ...], str]:
+        """Load DSM from GeoTIFF.
+
+        Returns:
+            (grid, geotransform, crs_wkt): grid has NaN for no-data cells.
+        """
+        from osgeo import gdal
+
+        ds = gdal.Open(self.dsm_file(), gdal.GA_ReadOnly)
+        if ds is None:
+            raise FileNotFoundError(f"DSM not found: {self.dsm_file()}")
+        band = ds.GetRasterBand(1)
+        nodata = band.GetNoDataValue()
+        arr = band.ReadAsArray().astype(np.float32)
+        # Flip back: GeoTIFF row 0 = top → our convention row 0 = bottom.
+        arr = np.flipud(arr)
+        if nodata is not None:
+            arr[arr == nodata] = np.nan
+        gt = ds.GetGeoTransform()
+        wkt = ds.GetProjection() or ""
+        ds = None
+        return arr, gt, wkt
 
     def raw_depthmap_exists(self, image: str) -> bool:
         return self.io_handler.isfile(self.depthmap_file(image, "raw.npz"))
@@ -922,70 +1071,223 @@ class UndistortedDataSet:
         score: NDArray,
         nghbr: NDArray,
         nghbrs: List[str],
+        confidence: Optional[NDArray] = None,
     ) -> None:
         self.io_handler.mkdir_p(self._depthmap_path())
+        self._write_raw_depthmap(image, depth, plane, score, nghbr, nghbrs,
+                                 confidence)
+
+    def _write_raw_depthmap(
+        self,
+        image: str,
+        depth: NDArray,
+        plane: NDArray,
+        score: NDArray,
+        nghbr: NDArray,
+        nghbrs: List[str],
+        confidence: Optional[NDArray] = None,
+    ) -> None:
         filepath = self.depthmap_file(image, "raw.npz")
+        buf = BytesIO()
+        arrays = dict(depth=depth, plane=plane, score=score,
+                      nghbr=nghbr, nghbrs=nghbrs)
+        if confidence is not None:
+            arrays["confidence"] = confidence
+        np.savez(buf, **arrays)
         with self.io_handler.open_wb(filepath) as f:
-            np.savez_compressed(
-                f, depth=depth, plane=plane, score=score, nghbr=nghbr, nghbrs=nghbrs
-            )
+            f.write(lz4_frame.compress(buf.getvalue()))
 
     def load_raw_depthmap(
         self, image: str
     ) -> Tuple[NDArray, NDArray, NDArray, NDArray, List[str]]:
         with self.io_handler.open_rb(self.depthmap_file(image, "raw.npz")) as f:
-            o = np.load(f)
-            return o["depth"], o["plane"], o["score"], o["nghbr"], o["nghbrs"]
+            raw = lz4_frame.decompress(f.read())
+        o = np.load(BytesIO(raw))
+        depth = o["depth"]
+        plane = o["plane"]
+        score = o["score"]
+        nghbr = o["nghbr"]
+        nghbrs = o["nghbrs"]
+        confidence = o["confidence"] if "confidence" in o else None
+        o.close()
+        return depth, plane, score, nghbr, nghbrs, confidence
 
     def clean_depthmap_exists(self, image: str) -> bool:
         return self.io_handler.isfile(self.depthmap_file(image, "clean.npz"))
 
     def save_clean_depthmap(
-        self, image: str, depth: NDArray, plane: NDArray, score: NDArray
+        self, image: str, depth: NDArray, plane: NDArray, score: NDArray,
+        confidence: Optional[NDArray] = None,
     ) -> None:
         self.io_handler.mkdir_p(self._depthmap_path())
+        self._write_clean_depthmap(image, depth, plane, score, confidence)
+
+    def _write_clean_depthmap(
+        self, image: str, depth: NDArray, plane: NDArray, score: NDArray,
+        confidence: Optional[NDArray] = None,
+    ) -> None:
         filepath = self.depthmap_file(image, "clean.npz")
+        buf = BytesIO()
+        arrays = dict(depth=depth, plane=plane, score=score)
+        if confidence is not None:
+            arrays["confidence"] = confidence
+        np.savez(buf, **arrays)
         with self.io_handler.open_wb(filepath) as f:
-            np.savez_compressed(f, depth=depth, plane=plane, score=score)
+            f.write(lz4_frame.compress(buf.getvalue()))
 
-    def load_clean_depthmap(self, image: str) -> Tuple[NDArray, NDArray, NDArray]:
-        with self.io_handler.open_rb(self.depthmap_file(image, "clean.npz")) as f:
-            o = np.load(f)
-            return o["depth"], o["plane"], o["score"]
-
-    def pruned_depthmap_exists(self, image: str) -> bool:
-        return self.io_handler.isfile(self.depthmap_file(image, "pruned.npz"))
-
-    def save_pruned_depthmap(
-        self,
-        image: str,
-        points: NDArray,
-        normals: NDArray,
-        colors: NDArray,
-        labels: NDArray,
-    ) -> None:
-        self.io_handler.mkdir_p(self._depthmap_path())
-        filepath = self.depthmap_file(image, "pruned.npz")
-        with self.io_handler.open_wb(filepath) as f:
-            np.savez_compressed(
-                f,
-                points=points,
-                normals=normals,
-                colors=colors,
-                labels=labels,
-            )
-
-    def load_pruned_depthmap(
+    def load_clean_depthmap(
         self, image: str
-    ) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
-        with self.io_handler.open_rb(self.depthmap_file(image, "pruned.npz")) as f:
-            o = np.load(f)
-            return (
-                o["points"],
-                o["normals"],
-                o["colors"],
-                o["labels"],
-            )
+    ) -> Tuple[NDArray, NDArray, NDArray, Optional[NDArray]]:
+        with self.io_handler.open_rb(self.depthmap_file(image, "clean.npz")) as f:
+            raw = lz4_frame.decompress(f.read())
+        o = np.load(BytesIO(raw))
+        depth = o["depth"]
+        plane = o["plane"]
+        score = o["score"]
+        confidence = o["confidence"] if "confidence" in o else None
+        o.close()
+        return depth, plane, score, confidence
+
+    def save_raw_depthmaps_parallel(
+        self,
+        items: List[
+            Tuple[str, NDArray, NDArray, NDArray, NDArray, List[str],
+                  Optional[NDArray]]
+        ],
+    ) -> None:
+        """Save multiple raw depthmaps in parallel.
+
+        Each item is (image, depth, plane, score, nghbr, nghbrs, confidence).
+        LZ4 compression and NPZ serialization run in a thread pool.
+        """
+        self.io_handler.mkdir_p(self._depthmap_path())
+
+        def _save_one(
+            item: Tuple[str, NDArray, NDArray, NDArray, NDArray, List[str],
+                        Optional[NDArray]],
+        ) -> None:
+            self._write_raw_depthmap(*item)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            list(pool.map(_save_one, items))
+
+    def load_raw_depthmaps_parallel(
+        self,
+        images: List[str],
+    ) -> List[Tuple[NDArray, NDArray, NDArray, NDArray, List[str],
+                    Optional[NDArray]]]:
+        """Load multiple raw depthmaps in parallel."""
+
+        def _load_one(
+            image: str,
+        ) -> Tuple[NDArray, NDArray, NDArray, NDArray, List[str],
+                   Optional[NDArray]]:
+            return self.load_raw_depthmap(image)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            return list(pool.map(_load_one, images))
+
+    def save_clean_depthmaps_parallel(
+        self,
+        items: List[Tuple[str, NDArray, NDArray, NDArray, Optional[NDArray]]],
+    ) -> None:
+        """Save multiple clean depthmaps in parallel.
+
+        Each item is (image, depth, plane, score, confidence).
+        """
+        self.io_handler.mkdir_p(self._depthmap_path())
+
+        def _save_one(
+            item: Tuple[str, NDArray, NDArray, NDArray, Optional[NDArray]],
+        ) -> None:
+            self._write_clean_depthmap(*item)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            list(pool.map(_save_one, items))
+
+    def load_clean_depthmaps_parallel(
+        self,
+        images: List[str],
+    ) -> List[Tuple[NDArray, NDArray, NDArray, Optional[NDArray]]]:
+        """Load multiple clean depthmaps in parallel."""
+
+        def _load_one(
+            image: str,
+        ) -> Tuple[NDArray, NDArray, NDArray, Optional[NDArray]]:
+            return self.load_clean_depthmap(image)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            return list(pool.map(_load_one, images))
+
+    def load_undistorted_images_parallel(
+        self,
+        images: List[str],
+    ) -> Dict[str, NDArray]:
+        """Load multiple undistorted images in parallel.
+
+        Returns a dict mapping image id → pixel array.
+        """
+        if not images:
+            return {}
+
+        def _load_one(image: str) -> Tuple[str, NDArray]:
+            return image, self.load_undistorted_image(image)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            return dict(pool.map(_load_one, images))
+
+    def load_undistorted_validity_masks_parallel(
+        self,
+        images: List[str],
+    ) -> Dict[str, NDArray]:
+        """Load validity masks for multiple images in parallel.
+
+        Returns a dict mapping image id → mask array, only for images
+        that have a validity mask on disk.
+        """
+        existing = [
+            img for img in images
+            if self.undistorted_validity_mask_exists(img)
+        ]
+        if not existing:
+            return {}
+
+        def _load_one(image: str) -> Tuple[str, NDArray]:
+            return image, self.load_undistorted_validity_mask(image)
+
+        with ThreadPoolExecutor(max_workers=self.config["io_processes"]) as pool:
+            return dict(pool.map(_load_one, existing))
+
+    # ── Fusion progress checkpointing ─────────────────────────────────
+
+    def _fusion_progress_file(self) -> str:
+        return os.path.join(self._depthmap_path(), "fusion_progress.json")
+
+    def save_fusion_progress(
+        self, fused_shot_ids: set, fused_batches: List[int]
+    ) -> None:
+        """Persist which shots have been fused and which batch PLYs exist."""
+        self.io_handler.mkdir_p(self._depthmap_path())
+        payload = {
+            "fused_shot_ids": sorted(fused_shot_ids),
+            "fused_batches": sorted(fused_batches),
+        }
+        with self.io_handler.open_wt(self._fusion_progress_file()) as f:
+            json.dump(payload, f, indent=2)
+
+    def load_fusion_progress(self) -> Tuple[set, List[int]]:
+        """Load fusion checkpoint.  Returns ``(fused_shot_ids, fused_batches)``.
+
+        If no checkpoint exists, returns empty containers.
+        """
+        path = self._fusion_progress_file()
+        if not self.io_handler.isfile(path):
+            return set(), []
+        with self.io_handler.open_rt(path) as f:
+            data = json.load(f)
+        return set(data.get("fused_shot_ids", [])), list(
+            data.get("fused_batches", [])
+        )
 
     def load_undistorted_tracks_manager(self) -> pymap.TracksManager:
         filename = os.path.join(self.data_path, "tracks.csv")

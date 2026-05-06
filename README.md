@@ -14,14 +14,43 @@ Checkout this [blog post with more demos](http://blog.mapillary.com/update/2014/
 
 ## Getting Started
 
-* [Building the library][]
-* [Running a reconstruction][]
-* [Documentation][]
+Install using conda lock files (see [building instructions](doc/building.md)):
 
+**Linux:**
+```bash
+conda create --name opensfm --file conda-linux-64.lock --yes
+conda activate opensfm && pip install -e .
+```
 
-[Building the library]: https://opensfm.org/docs/building.html (OpenSfM building instructions)
-[Running a reconstruction]: https://opensfm.org/docs/using.html (OpenSfM usage)
-[Documentation]: https://opensfm.org/docs/ (OpenSfM documentation)
+**macOS (Apple Silicon):**
+```bash
+conda create --name opensfm --file conda-osx-arm64.lock --yes
+conda activate opensfm && pip install -e .
+```
+
+**Windows:** run `setup.bat` — it handles everything automatically.
+
+Then reconstruct a dataset:
+```bash
+conda activate opensfm
+./bin/opensfm reconstruct path/to/dataset   # Linux/macOS
+bin\opensfm.bat reconstruct path\to\dataset  # Windows
+```
+## Documentation
+
+* [Building](doc/building.md)
+* [Using OpenSfM](doc/using.md)
+* [Dataset structure](doc/dataset.md)
+* [Geometric models](doc/geometry.md)
+* [Camera coordinate system](doc/camera_coordinate_system.md)
+* [Reconstruction algorithm](doc/reconstruction.md)
+* [Large datasets](doc/large_datasets.md)
+* [Reporting](doc/reporting.md)
+* [Quality report](doc/quality_report.md)
+* [Rig models](doc/rig.md)
+* [Sensor / calibration database](doc/sensor_database.md)
+* [Dense matching notes](doc/dense_matching.md)
+* [Reconstruction merging notes](doc/merging_notes.md)
 
 ## License
 OpenSfM is BSD-style licensed, as found in the LICENSE file.  See also the Facebook Open Source [Terms of Use][] and [Privacy Policy][]

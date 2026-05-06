@@ -557,6 +557,8 @@ def pymap_metadata_to_json(metadata: pymap.ShotMeasurements) -> Dict[str, Any]:
         obj["opk_angles"] = list(metadata.opk_angles.value)
     if metadata.opk_accuracy.has_value:
         obj["opk_accuracy"] = metadata.opk_accuracy.value
+    if metadata.relative_altitude.has_value:
+        obj["relative_altitude"] = metadata.relative_altitude.value
     return obj
 
 
@@ -588,6 +590,8 @@ def json_to_pymap_metadata(obj: Dict[str, Any]) -> pymap.ShotMeasurements:
         metadata.opk_angles.value = obj.get("opk_angles")
     if obj.get("opk_accuracy") is not None:
         metadata.opk_accuracy.value = obj.get("opk_accuracy")
+    if obj.get("relative_altitude") is not None:
+        metadata.relative_altitude.value = obj.get("relative_altitude")
     return metadata
 
 
@@ -704,7 +708,7 @@ def camera_from_vector(
         focal, k1, k2 = parameters
         camera = pygeometry.Camera.create_perspective(focal, k1, k2)
     elif projection_type == "brown":
-        fx, fy, cx, cy, k1, k2, p1, p2, k3 = parameters
+        fx, fy, cx, cy, k1, k2, k3, p1, p2 = parameters
         camera = pygeometry.Camera.create_brown(
             fx, fy / fx, np.array([cx, cy]), np.array([k1, k2, k3, p1, p2])
         )
@@ -765,9 +769,9 @@ def camera_to_vector(camera: pygeometry.Camera) -> List[float]:
             camera.principal_point[1],
             camera.k1,
             camera.k2,
+            camera.k3,
             camera.p1,
             camera.p2,
-            camera.k3,
         ]
     elif camera.projection_type == "fisheye":
         parameters = [camera.focal, camera.k1, camera.k2]
@@ -848,58 +852,6 @@ def camera_to_vector(camera: pygeometry.Camera) -> List[float]:
     return parameters
 
 
-def _read_gcp_list_lines(
-    lines: Iterable[str],
-    projection: Optional[pyproj.Transformer],
-    exifs: Dict[str, Dict[str, Any]],
-) -> List[pymap.GroundControlPoint]:
-    points = {}
-    for line in lines:
-        words = line.split(None, 5)
-        easting, northing, alt, pixel_x, pixel_y = map(float, words[:5])
-        key = (easting, northing, alt)
-
-        shot_tokens = words[5].split(None)
-        shot_id = shot_tokens[0]
-        if shot_id not in exifs:
-            continue
-
-        if key in points:
-            point = points[key]
-        else:
-            # Convert 3D coordinates
-            if np.isnan(alt):
-                alt = 0
-                has_altitude = False
-            else:
-                has_altitude = True
-            if projection is not None:
-                lat, lon = projection.transform(easting, northing)
-            else:
-                lon, lat = easting, northing
-
-            point = pymap.GroundControlPoint()
-            point.id = "unnamed-%d" % len(points)
-            point.lla = {"latitude": lat, "longitude": lon, "altitude": alt}
-            point.has_altitude = has_altitude
-            point.coordinates = [easting, northing, alt]
-
-            points[key] = point
-
-        # Convert 2D coordinates
-        d = exifs[shot_id]
-        coordinates = features.normalized_image_coordinates(
-            np.array([[pixel_x, pixel_y]]), d["width"], d["height"]
-        )[0]
-
-        o = pymap.GroundControlPointObservation()
-        o.shot_id = shot_id
-        o.projection = coordinates
-        point.add_observation(o)
-
-    return list(points.values())
-
-
 def _parse_utm_projection_string(line: str) -> str:
     """Convert strings like 'WGS84 UTM 32N' to a proj4 definition."""
     words = line.lower().split()
@@ -932,10 +884,13 @@ def _parse_projection_string(line: str) -> Optional[str]:
 
 
 def read_gcp_projection_string(fileobj: IO[str]) -> Optional[str]:
-    """Read the projection string from a gcp_list.txt file."""
+    """Read the projection string from a gcp_list.txt file.
+
+    Returns None for WGS84 / EPSG:4326 (identity), a PROJ string otherwise.
+    """
     for line in fileobj:
         if _valid_gcp_line(line):
-            return _parse_projection_string(line)
+            return pymap.parse_gcp_projection_string(line.strip())
     return None
 
 
@@ -947,54 +902,24 @@ def _valid_gcp_line(line: str) -> bool:
 def read_gcp_list(
     fileobj: IO[str], exif: Dict[str, Any]
 ) -> List[pymap.GroundControlPoint]:
-    """Read a ground control points from a gcp_list.txt file.
+    """Read ground control points from a gcp_list.txt file.
 
-    It requires the points to be in the WGS84 lat, lon, alt format.
-    If reference is None, topocentric data won't be initialized.
+    The C++ reader handles CRS transformation internally via PROJ.
     """
-    all_lines = fileobj.readlines()
-    lines = iter(filter(_valid_gcp_line, all_lines))
-    projection_string = _parse_projection_string(next(lines))
-    projection = geo.construct_proj_transformer(
-        projection_string) if projection_string else None
-    points = _read_gcp_list_lines(lines, projection, exif)
-    return points
+    content = fileobj.read()
+
+    # Build image_widths dict expected by the C++ reader.
+    image_widths: Dict[str, Tuple[int, int]] = {}
+    for shot_id, exif_data in exif.items():
+        image_widths[shot_id] = (exif_data["width"], exif_data["height"])
+
+    return pymap.read_gcp_list(content, image_widths)
 
 
 def read_ground_control_points(fileobj: IO[str]) -> List[pymap.GroundControlPoint]:
     """Read ground control points from json file"""
-    obj = json_load(fileobj)
-
-    points = []
-    for point_dict in obj["points"]:
-        point = pymap.GroundControlPoint()
-        point.id = point_dict["id"]
-        lla = point_dict.get("position")
-        if lla:
-            point.lla = lla
-            point.has_altitude = "altitude" in point.lla
-
-        if "coordinates" in point_dict:
-            point.coordinates = point_dict["coordinates"]
-
-        observations = []
-        observing_images = set()
-        for o_dict in point_dict["observations"]:
-            o = pymap.GroundControlPointObservation()
-            o.shot_id = o_dict["shot_id"]
-            if o.shot_id in observing_images:
-                logger.warning(
-                    "GCP {} has multiple observations in image {}".format(
-                        point.id, o.shot_id
-                    )
-                )
-            observing_images.add(o.shot_id)
-            if "projection" in o_dict:
-                o.projection = np.array(o_dict["projection"])
-            observations.append(o)
-        point.observations = observations
-        points.append(point)
-    return points
+    content = fileobj.read()
+    return pymap.read_gcp_json(content)
 
 
 def write_ground_control_points(
@@ -1002,34 +927,8 @@ def write_ground_control_points(
     fileobj: IO[str],
 ) -> None:
     """Write ground control points to json file."""
-    obj = {"points": []}
-
-    for point in gcp:
-        point_obj = {}
-        point_obj["id"] = point.id
-        if point.lla:
-            point_obj["position"] = {
-                "latitude": point.lla["latitude"],
-                "longitude": point.lla["longitude"],
-            }
-            if point.has_altitude:
-                point_obj["position"]["altitude"] = point.lla["altitude"]
-
-        if hasattr(point, "coordinates"):
-            point_obj["coordinates"] = list(point.coordinates)
-
-        point_obj["observations"] = []
-        for observation in point.observations:
-            point_obj["observations"].append(
-                {
-                    "shot_id": observation.shot_id,
-                    "projection": tuple(observation.projection),
-                }
-            )
-
-        obj["points"].append(point_obj)
-
-    json_dump(obj, fileobj)
+    content = pymap.write_gcp_json(gcp)
+    fileobj.write(content)
 
 
 def json_dump_kwargs(minify: bool = False) -> Dict[str, Any]:
@@ -1154,26 +1053,57 @@ def reconstruction_to_ply(
 
 
 def point_cloud_from_ply(
-    fp: TextIO,
+    fp: BinaryIO,
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
-    """Load point cloud from a PLY file."""
-    all_lines = fp.read().splitlines()
-    start = all_lines.index("end_header") + 1
-    lines = all_lines[start:]
-    n = len(lines)
+    """Load point cloud from a PLY file (ASCII or binary_little_endian)."""
+    # Read header (always ASCII lines terminated by \n).
+    header_lines: List[str] = []
+    while True:
+        raw = fp.readline()
+        line = raw.decode("ascii").rstrip("\r\n")
+        header_lines.append(line)
+        if line == "end_header":
+            break
 
-    points = np.zeros((n, 3), dtype=np.float32)
-    normals = np.zeros((n, 3), dtype=np.float32)
-    colors = np.zeros((n, 3), dtype=np.uint8)
-    labels = np.zeros((n,), dtype=np.uint8)
+    # Determine format from header.
+    fmt = "ascii"
+    n = 0
+    for h in header_lines:
+        if h.startswith("format "):
+            fmt = h.split()[1]  # "ascii" or "binary_little_endian"
+        elif h.startswith("element vertex "):
+            n = int(h.split()[-1])
 
-    for i, row in enumerate(lines):
-        words = row.split()
-        label = int(words[9])
-        points[i] = list(map(float, words[0:3]))
-        normals[i] = list(map(float, words[3:6]))
-        colors[i] = list(map(int, words[6:9]))
-        labels[i] = label
+    if n == 0:
+        return (
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.uint8),
+            np.zeros((0,), dtype=np.uint8),
+        )
+
+    if fmt == "binary_little_endian":
+        row_dt = np.dtype([("f", "<f4", 6), ("c", "u1", 4)])
+        buf = fp.read(n * row_dt.itemsize)
+        rows = np.frombuffer(buf, dtype=row_dt, count=n)
+        points = rows["f"][:, :3].astype(np.float32)
+        normals = rows["f"][:, 3:].astype(np.float32)
+        colors = rows["c"][:, :3].astype(np.uint8)
+        labels = rows["c"][:, 3].astype(np.uint8)
+    else:
+        # ASCII fallback.
+        text = fp.read().decode("ascii")
+        lines = text.splitlines()
+        points = np.zeros((n, 3), dtype=np.float32)
+        normals = np.zeros((n, 3), dtype=np.float32)
+        colors = np.zeros((n, 3), dtype=np.uint8)
+        labels = np.zeros((n,), dtype=np.uint8)
+        for i, row in enumerate(lines[:n]):
+            words = row.split()
+            points[i] = list(map(float, words[0:3]))
+            normals[i] = list(map(float, words[3:6]))
+            colors[i] = list(map(int, words[6:9]))
+            labels[i] = int(words[9])
 
     return points, normals, colors, labels
 
@@ -1183,40 +1113,40 @@ def point_cloud_to_ply(
     normals: NDArray,
     colors: NDArray,
     labels: NDArray,
-    fp: TextIO,
+    fp: BinaryIO,
 ) -> None:
-    fp.write("ply\n")
-    fp.write("format ascii 1.0\n")
-    fp.write("element vertex {}\n".format(len(points)))
-    fp.write("property float x\n")
-    fp.write("property float y\n")
-    fp.write("property float z\n")
-    fp.write("property float nx\n")
-    fp.write("property float ny\n")
-    fp.write("property float nz\n")
-    fp.write("property uchar red\n")
-    fp.write("property uchar green\n")
-    fp.write("property uchar blue\n")
-    fp.write("property uchar class\n")
-    fp.write("end_header\n")
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        f"element vertex {len(points)}\n"
+        "property float x\n"
+        "property float y\n"
+        "property float z\n"
+        "property float nx\n"
+        "property float ny\n"
+        "property float nz\n"
+        "property uchar red\n"
+        "property uchar green\n"
+        "property uchar blue\n"
+        "property uchar class\n"
+        "end_header\n"
+    )
+    fp.write(header.encode("ascii"))
 
-    template = "{:.4f} {:.4f} {:.4f} {:.3f} {:.3f} {:.3f} {} {} {} {}\n"
-    for i in range(len(points)):
-        p, n, c, l = points[i], normals[i], colors[i], labels[i]
-        fp.write(
-            template.format(
-                p[0],
-                p[1],
-                p[2],
-                n[0],
-                n[1],
-                n[2],
-                int(c[0]),
-                int(c[1]),
-                int(c[2]),
-                int(l),
-            )
-        )
+    n = len(points)
+    if n == 0:
+        return
+    pts = np.asarray(points, dtype="<f4")
+    nrm = np.asarray(normals, dtype="<f4")
+    col = np.asarray(colors, dtype=np.uint8)
+    lbl = np.asarray(labels, dtype=np.uint8).reshape(n, 1)
+    # Pack each row: 6 floats (xyz + nxnynz) + 4 bytes (rgb + class)
+    row_buf = np.empty(n, dtype=np.dtype([("f", "<f4", 6), ("c", "u1", 4)]))
+    row_buf["f"][:, :3] = pts
+    row_buf["f"][:, 3:] = nrm
+    row_buf["c"][:, :3] = col
+    row_buf["c"][:, 3:] = lbl
+    fp.write(row_buf.tobytes())
 
 
 # Filesystem interaction methods

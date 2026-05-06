@@ -10,7 +10,7 @@ from opensfm import transformations
 
 
 def rotation_from_angle_axis(angle_axis: NDArray) -> NDArray:
-    return cv2.Rodrigues(np.asarray(angle_axis))[0]
+    return pygeometry.rotation_from_angle_axis(np.asarray(angle_axis, dtype=np.float64))
 
 
 def rotation_from_ptr(pan: float, tilt: float, roll: float) -> NDArray:
@@ -72,33 +72,25 @@ def ptr_from_rotation_v2(rotation_matrix: NDArray) -> Tuple[float, float, float]
 
 
 def rotation_from_opk(omega: float, phi: float, kappa: float) -> NDArray:
-    """World-to-camera rotation matrix from pan, tilt and roll."""
+    """World-to-camera rotation matrix from OPK angles (in radians).
 
-    # Omega (ω), the rotation around the Χ axis. (East)
-    # Phi (φ), the rotation around the Y axis. (North)
-    # Kappa (κ), the rotation around the Z axis. (UP)
-    Rw = rotation_from_angle_axis(np.array([-omega, 0.0, 0.0]))
-    Rp = rotation_from_angle_axis(np.array([0.0, -phi, 0.0]))
-    Rk = rotation_from_angle_axis(np.array([0.0, 0.0, -kappa]))
+    Omega (ω): rotation about X (East).
+    Phi   (φ): rotation about Y (North).
+    Kappa (κ): rotation about Z (Up).
+    """
+    from opensfm import pygeometry
 
-    # OpenSfM
-    # The z-axis points forward
-    # The y-axis points down
-    # The x-axis points to the right
-    Rc = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    return Rc.dot(Rk).dot(Rp).dot(Rw)
+    return np.asarray(pygeometry.rotation_from_opk(omega, phi, kappa))
 
 
 def opk_from_rotation(
     rotation_matrix: NDArray,
 ) -> Tuple[float, float, float]:
-    """Omega, phi, kappa from camera rotation matrix"""
-    Rc = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    R = rotation_matrix.T.dot(Rc)
-    omega = omega_from_rotation(R)
-    phi = phi_from_rotation(R)
-    kappa = kappa_from_rotation(R)
-    return omega, phi, kappa
+    """Omega, phi, kappa from world-to-camera rotation matrix (in radians)."""
+
+    opk = pygeometry.opk_from_rotation(
+        np.asarray(rotation_matrix, dtype=np.float64))
+    return float(opk[0]), float(opk[1]), float(opk[2])
 
 
 def omega_from_rotation(rotation_matrix: NDArray) -> float:

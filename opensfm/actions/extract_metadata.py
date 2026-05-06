@@ -12,7 +12,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 logging.getLogger("exifread").setLevel(logging.WARNING)
 
 
-def run_dataset(data: DataSetBase) -> None:
+def run_dataset(data: DataSetBase, force: bool = False) -> None:
     """Extract metadata from images' EXIF tag."""
 
     exif_overrides = {}
@@ -21,7 +21,7 @@ def run_dataset(data: DataSetBase) -> None:
 
     camera_models = {}
     for image in data.images():
-        if data.exif_exists(image):
+        if not force and data.exif_exists(image):
             logging.info("Loading existing EXIF for {}".format(image))
             d = data.load_exif(image)
         else:
@@ -48,6 +48,7 @@ def run_dataset(data: DataSetBase) -> None:
             for key, value in overrides.items():
                 camera_models[key] = value
     data.save_camera_models(camera_models)
+    data.init_reference()
 
 
 def _extract_exif(image: str, data: DataSetBase) -> Dict[str, Any]:

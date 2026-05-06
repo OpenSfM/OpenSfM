@@ -18,9 +18,12 @@ dependencies = [
     "exifread>=2.1.2",
     "flask>=2.3.2",
     "fpdf2>=2.4.6",
+    "igraph>=1.0.0",
     "joblib>=1.0.0",
+    "lz4>=4.4.5",
     "matplotlib",
     "networkx>=2.5",
+    "leidenalg>=0.11.0",
     "numpy>=1.19",
     "Pillow>=8.1.1",
     "pyproj>=1.9.5.1",
@@ -36,10 +39,6 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "wheel",
-]
-docs = [
-    "Sphinx>=4.2.0",
-    "sphinx_rtd_theme>=1.0.0",
 ]
 test = [
     "pytest>=7.0.0",

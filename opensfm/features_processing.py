@@ -87,16 +87,16 @@ def run_features_processing(data: DataSetBase, images: List[str], force: bool) -
             process_queue.get()
     else:
         counter = Counter()
-        read_processes = data.config["read_processes"]
-        if 1.5 * read_processes >= processes:
-            read_processes = max(1, processes // 2)
+        io_processes = data.config["io_processes"]
+        if 1.5 * io_processes >= processes:
+            io_processes = max(1, processes // 2)
 
-        chunk_size = math.ceil(len(images) / read_processes)
+        chunk_size = math.ceil(len(images) / io_processes)
         chunks_count = math.ceil(len(images) / chunk_size)
-        read_processes = min(read_processes, chunks_count)
+        io_processes = min(io_processes, chunks_count)
 
         expected: int = len(images)
-        for i in range(read_processes):
+        for i in range(io_processes):
             images_chunk = images[i * chunk_size : (i + 1) * chunk_size]
             arguments.append(
                 (
