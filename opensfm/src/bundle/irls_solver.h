@@ -133,6 +133,7 @@ class IRLSSolver {
   void SetGroupDensityRatio(const std::string& group_id, double ratio);
   void SetAllGroupsDensityRatio(double ratio);
   void InitializeKFromResiduals(bool enable);
+  void SetSkipInitialReweighting(bool skip) { skip_initial_reweighting_ = skip; }
 
   void Run();
 
@@ -159,6 +160,7 @@ class IRLSSolver {
   double current_log_likelihood_{-std::numeric_limits<double>::infinity()};
 
   bool auto_initialize_k_{false};
+  bool skip_initial_reweighting_{false};
 };
 
 }  // namespace bundle

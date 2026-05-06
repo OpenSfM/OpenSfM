@@ -28,6 +28,14 @@ def test_reconstructions_from_json_consistency() -> None:
     for key, shot in obj_before[0]["shots"].items():
         for attr in shot:
             obj1 = obj_before[0]["shots"][key][attr]
+            # gps_dop is a legacy scalar field normalised to gps_accuracy
+            # (a 3-vector) on round-trip; verify the conversion instead.
+            if attr == "gps_dop":
+                dop = float(obj1)
+                assert np.allclose(
+                    obj_after[0]["shots"][key]["gps_accuracy"], [dop, dop, dop]
+                )
+                continue
             obj2 = obj_after[0]["shots"][key][attr]
             if attr in ["translation", "rotation"]:
                 assert np.allclose(np.array(obj1), np.array(obj2))

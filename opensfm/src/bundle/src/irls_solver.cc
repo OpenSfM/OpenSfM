@@ -466,7 +466,9 @@ void IRLSSolver::Run() {
   // the trust region grow unboundedly, making J^T W J + lambda*I singular.
   run_options.max_trust_region_radius = 1e8;
 
-  ComputeWeights();
+  if (!skip_initial_reweighting_) {
+    ComputeWeights();
+  }
 
   ceres::Solve(run_options, &problem_, &last_run_summary_);
 }

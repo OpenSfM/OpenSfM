@@ -140,6 +140,8 @@ PYBIND11_MODULE(pybundle, m) {
            &bundle::BundleAdjuster::SetGroupDensityRatio)
       .def("get_group_density_ratio",
            &bundle::BundleAdjuster::GetGroupDensityRatio)
+      .def("set_skip_initial_reweighting",
+           &bundle::BundleAdjuster::SetSkipInitialReweighting)
       .def("brief_report", &bundle::BundleAdjuster::BriefReport)
       .def("full_report", &bundle::BundleAdjuster::FullReport)
       .def("irls_report", &bundle::BundleAdjuster::IRLSReport);

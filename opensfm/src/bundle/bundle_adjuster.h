@@ -272,6 +272,7 @@ class BundleAdjuster {
   bool GetCovarianceEstimationValid() const;
   void SetComputeReprojectionErrors(bool v);
 
+  void SetSkipInitialReweighting(bool skip);
   void SetDefaultDensityRatio(double ratio);
   double GetDefaultDensityRatio() const;
   void SetGroupDensityRatio(const std::string& group_id, double ratio);
@@ -376,6 +377,7 @@ class BundleAdjuster {
   // IRLS density ratio configuration
   double default_density_ratio_{0.001};
   std::map<std::string, double> group_density_ratios_;
+  bool skip_initial_reweighting_{false};
 
   // internal
   ceres::Solver::Summary last_run_solver_summary_;

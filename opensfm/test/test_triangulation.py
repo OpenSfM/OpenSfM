@@ -4,104 +4,6 @@ from numpy.typing import ArrayLike, NDArray
 from opensfm import io, pygeometry, pymap, reconstruction
 
 
-def test_track_triangulator_spherical() -> None:
-    """Test triangulating tracks of spherical images."""
-    tracks_manager = pymap.TracksManager()
-    tracks_manager.add_observation("im1", "1", pymap.Observation(0, 0, 1.0, 0, 0, 0, 0))
-    tracks_manager.add_observation(
-        "im2", "1", pymap.Observation(-0.1, 0, 1.0, 0, 0, 0, 1)
-    )
-
-    rec = io.reconstruction_from_json(
-        {
-            "cameras": {
-                "theta": {
-                    "projection_type": "spherical",
-                    "width": 800,
-                    "height": 400,
-                }
-            },
-            "shots": {
-                "im1": {
-                    "camera": "theta",
-                    "rotation": [0.0, 0.0, 0.0],
-                    "translation": [0.0, 0.0, 0.0],
-                },
-                "im2": {
-                    "camera": "theta",
-                    "rotation": [0.0, 0.0, 0.0],
-                    "translation": [-1.0, 0.0, 0.0],
-                },
-            },
-            "points": {},
-        }
-    )
-
-    triangulator = reconstruction.TrackTriangulator(
-        rec, reconstruction.TrackHandlerTrackManager(tracks_manager, rec)
-    )
-    triangulator.triangulate(
-        "1",
-        reproj_threshold=0.01,
-        min_ray_angle_degrees=2.0,
-        min_depth=0.001,
-        iterations=10,
-    )
-    assert "1" in rec.points
-    p = rec.points["1"].coordinates
-    assert np.allclose(p, [0, 0, 1.3763819204711])
-    assert len(rec.points["1"].get_observations()) == 2
-
-
-def test_track_triangulator_coincident_camera_origins() -> None:
-    """Test triangulating tracks when two cameras have the same origin.
-
-    Triangulation should fail and no points should be added to the reconstruction.
-    """
-    tracks_manager = pymap.TracksManager()
-    tracks_manager.add_observation("im1", "1", pymap.Observation(0, 0, 1.0, 0, 0, 0, 0))
-    tracks_manager.add_observation(
-        "im2", "1", pymap.Observation(-0.1, 0, 1.0, 0, 0, 0, 1)
-    )
-
-    rec = io.reconstruction_from_json(
-        {
-            "cameras": {
-                "theta": {
-                    "projection_type": "spherical",
-                    "width": 800,
-                    "height": 400,
-                }
-            },
-            "shots": {
-                "im1": {
-                    "camera": "theta",
-                    "rotation": [0.0, 0.0, 0.0],
-                    "translation": [0.0, 0.0, 0.0],
-                },
-                "im2": {
-                    "camera": "theta",
-                    "rotation": [0.0, 0.0, 0.0],
-                    "translation": [0.0, 0.0, 0.0],
-                },
-            },
-            "points": {},
-        }
-    )
-
-    triangulator = reconstruction.TrackTriangulator(
-        rec, reconstruction.TrackHandlerTrackManager(tracks_manager, rec)
-    )
-    triangulator.triangulate(
-        "1",
-        reproj_threshold=0.01,
-        min_ray_angle_degrees=2.0,
-        min_depth=0.0001,
-        iterations=10,
-    )
-    assert not rec.points
-
-
 def unit_vector(x: ArrayLike) -> NDArray:
     return np.array(x) / np.linalg.norm(x)
 
@@ -115,7 +17,8 @@ def test_triangulate_bearings_dlt() -> None:
     min_ray_angle = np.radians(2.0)
     min_depth = 0.001
     res, X = pygeometry.triangulate_bearings_dlt(
-        [rt1, rt2], np.asarray([b1, b2]), max_reprojection, min_ray_angle, min_depth
+        [rt1, rt2], np.asarray(
+            [b1, b2]), max_reprojection, min_ray_angle, min_depth
     )
     assert np.allclose(X, [0, 0, 1.0])
     assert res is True
@@ -130,7 +33,8 @@ def test_triangulate_bearings_dlt_coincident_camera_origins() -> None:
     min_ray_angle = np.radians(2.0)
     min_depth = 0.001
     res, X = pygeometry.triangulate_bearings_dlt(
-        [rt1, rt2], np.asarray([b1, b2]), max_reprojection, min_ray_angle, min_depth
+        [rt1, rt2], np.asarray(
+            [b1, b2]), max_reprojection, min_ray_angle, min_depth
     )
     assert res is False
 

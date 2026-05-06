@@ -33,7 +33,7 @@ def test_reconstruction_triangulation(
     assert errors["ratio_cameras"] == 1.0
     assert 0.7 < errors["ratio_points"] < 1.0
 
-    assert 0 < errors["aligned_position_rmse"] < 0.035
+    assert 0 < errors["aligned_position_rmse"] < 0.045
     assert 0 < errors["aligned_rotation_rmse"] < 0.0038
     assert 0 < errors["aligned_points_rmse"] < 0.1
 

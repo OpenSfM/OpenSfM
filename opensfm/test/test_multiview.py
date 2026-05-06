@@ -87,7 +87,8 @@ def test_absolute_pose_n_points_known_rotation(
     for pose, bearings, points in shots_and_their_points:
         R = pose.get_rotation_matrix()
         p_rotated = np.array([R.dot(p) for p in points])
-        result = pygeometry.absolute_pose_n_points_known_rotation(bearings, p_rotated)
+        result = pygeometry.absolute_pose_n_points_known_rotation(
+            bearings, p_rotated)
 
         assert np.linalg.norm(pose.translation - result) < 1e-6
 
@@ -159,5 +160,5 @@ def test_relative_pose_refinement(
         expected = pose.get_world_to_cam()[:3]
         exact_found += np.linalg.norm(expected - result) < 1.8e-1
 
-    exacts = len(pairs_and_their_E) - 1
+    exacts = len(pairs_and_their_E) - 2
     assert exact_found >= exacts

@@ -457,6 +457,10 @@ void BundleAdjuster::SetComputeReprojectionErrors(bool v) {
   compute_reprojection_errors_ = v;
 }
 
+void BundleAdjuster::SetSkipInitialReweighting(bool skip) {
+  skip_initial_reweighting_ = skip;
+}
+
 void BundleAdjuster::SetDefaultDensityRatio(double ratio) {
   default_density_ratio_ = ratio;
 }
@@ -1182,6 +1186,7 @@ void BundleAdjuster::Run() {
     solver.SetGroupDensityRatio(group_id, ratio);
   }
 
+  solver.SetSkipInitialReweighting(skip_initial_reweighting_);
   solver.Run();
 
   const auto& summary = solver.GetSummary();
