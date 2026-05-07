@@ -5,6 +5,7 @@ set(FEATURES_FILES
     src/akaze_bind.cc
     src/hahog.cc
     src/matching.cc
+    src/dspsift.cc
 )
 add_library(features ${FEATURES_FILES})
 target_link_libraries(features

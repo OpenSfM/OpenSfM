@@ -25,7 +25,7 @@ class OpenSfMConfig:
     ##################################
     # Params for features
     ##################################
-    # Feature type (AKAZE, SURF, SIFT, HAHOG, ORB)
+    # Feature type (AKAZE, SURF, SIFT, HAHOG, ORB, DSPSIFT)
     feature_type: str = "HAHOG"
     # If true, apply square root mapping to features
     feature_root: bool = True
@@ -58,6 +58,12 @@ class OpenSfMConfig:
     sift_octave_layers: int = 3
     # See OpenCV doc
     sift_sigma: float = 1.6
+
+    ##################################
+    # Params for DSPSIFT
+    ##################################
+    dspsift_peak_threshold: float = 0.006
+    dspsift_edge_threshold: int = 10
 
     ##################################
     # Params for SURF
