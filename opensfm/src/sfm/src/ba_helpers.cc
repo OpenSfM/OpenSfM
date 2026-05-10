@@ -326,6 +326,8 @@ BAHelpers::BundleLocalResult BAHelpers::BundleLocal(
   ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
   ba.SetGroupDensityRatio(
       "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GPS", config["bundle_irls_gps_density_ratio"].cast<double>());
 
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(10);
@@ -748,6 +750,8 @@ py::dict BAHelpers::BundleShotPoses(
   ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
   ba.SetGroupDensityRatio(
       "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GPS", config["bundle_irls_gps_density_ratio"].cast<double>());
 
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(10);
@@ -1031,6 +1035,8 @@ py::dict BAHelpers::Bundle(
   ba.SetDefaultDensityRatio(config["bundle_irls_density_ratio"].cast<double>());
   ba.SetGroupDensityRatio(
       "GCP2D", config["bundle_irls_gcp_density_ratio"].cast<double>());
+  ba.SetGroupDensityRatio(
+      "GPS", config["bundle_irls_gps_density_ratio"].cast<double>());
 
   ba.SetNumThreads(config["processes"].cast<int>());
   ba.SetMaxNumIterations(config["bundle_max_iterations"].cast<int>());

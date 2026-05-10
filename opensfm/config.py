@@ -298,6 +298,8 @@ class OpenSfMConfig:
     bundle_irls_density_ratio: float = 0.001
     # Density ratio override for GCP 2D projection residuals (set higher to be more lenient on GCPs)
     bundle_irls_gcp_density_ratio: float = 0.00001
+    # Density ratio override for GPS residuals (set higher to be more lenient on GPS)
+    bundle_irls_gps_density_ratio: float = 0.00001
 
     # Ratio of (resection candidates / total tracks) of a given image so that it is culled at resection and resected later
     resect_redundancy_threshold: float = 0.7
