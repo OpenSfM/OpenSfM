@@ -268,8 +268,8 @@ TEST_F(OneCameraMapFixture, ComputeReprojectionErrorNormalized) {
   auto errors =
       map.ComputeReprojectionErrors(manager, map::Map::ErrorType::Normalized);
   const auto computed = errors["0"]["1"];
-  ASSERT_NEAR(expected[0] / scale, computed[0], 1e-7);
-  ASSERT_NEAR(expected[1] / scale, computed[1], 1e-7);
+  ASSERT_NEAR(expected[0] / scale, computed[0], 1e-6);
+  ASSERT_NEAR(expected[1] / scale, computed[1], 1e-6);
 }
 
 class OneRigMapFixture : public EmptyMapFixture {

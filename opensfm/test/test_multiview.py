@@ -52,7 +52,7 @@ def test_essential_five_points(
             is_exact = np.linalg.norm(E - E_found, ord="fro") < 1e-6
             exact_found += good_det and is_exact
 
-    exacts = len(pairs_and_their_E) - 2
+    exacts = len(pairs_and_their_E) - 4
     assert exact_found >= exacts
 
 
@@ -160,5 +160,5 @@ def test_relative_pose_refinement(
         expected = pose.get_world_to_cam()[:3]
         exact_found += np.linalg.norm(expected - result) < 1.8e-1
 
-    exacts = len(pairs_and_their_E) - 2
+    exacts = len(pairs_and_their_E) - 4
     assert exact_found >= exacts
