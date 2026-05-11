@@ -785,14 +785,29 @@ def match_candidates_from_metadata(
         logger.info(
             f"Running non-GPS matching for {len(images_ref_no_gps)} images without GPS"
         )
-        no_gps_pairs, no_gps_report = _run_matching_strategies(
-            images_ref_no_gps, images_cand_gps, exifs, data, reference,
-            0, 0, 0,  # max_distance, gps_neighbors, graph_rounds disabled
-            time_neighbors, order_neighbors,
-            bow_neighbors, 0, 0, bow_other_cameras,  # bow GPS preemption disabled
-            vlad_neighbors, 0, 0, vlad_other_cameras,  # vlad GPS preemption disabled
-            use_opk,
-        )
+
+        no_gps_pairs = set()
+        no_gps_report = {}
+
+        def _matching_with_no_gps(candidates: List[str]) -> Tuple[Set[Tuple[str, str]], Dict[str, int]]:
+            matching_ret = _run_matching_strategies(
+                images_ref_no_gps, images_cand_no_gps, exifs, data, reference,
+                0, 0, 0,  # max_distance, gps_neighbors, graph_rounds disabled
+                time_neighbors, order_neighbors,
+                bow_neighbors, 0, 0, bow_other_cameras,  # bow GPS preemption disabled
+                vlad_neighbors, 0, 0, vlad_other_cameras,  # vlad GPS preemption disabled
+                use_opk,
+            )
+            no_gps_pairs.update(matching_ret[0])
+            for k, v in matching_ret[1].items():
+                no_gps_report[k] = no_gps_report.get(k, 0) + v
+
+        no_gps_pairs = set()
+        no_gps_report = {}
+        if len(images_cand_gps) > 0:
+            _matching_with_no_gps(images_cand_gps)
+        if len(images_cand_no_gps) > 0:
+            _matching_with_no_gps(images_cand_no_gps)
         for k, v in no_gps_report.items():
             report[k] = report.get(k, 0) + v
 
