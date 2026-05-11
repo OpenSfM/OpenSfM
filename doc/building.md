@@ -9,7 +9,7 @@
 ### Linux
 
 ```bash
-git clone --recursive https://github.com/mapillary/OpenSfM
+git clone --recursive https://github.com/OpenSfM/OpenSfM
 cd OpenSfM
 conda create --name opensfm --file conda-linux-64.lock --yes
 conda activate opensfm
@@ -19,7 +19,7 @@ pip install -e .
 ### macOS (Apple Silicon)
 
 ```bash
-git clone --recursive https://github.com/mapillary/OpenSfM
+git clone --recursive https://github.com/OpenSfM/OpenSfM
 cd OpenSfM
 conda create --name opensfm --file conda-osx-arm64.lock --yes
 conda activate opensfm
@@ -31,7 +31,7 @@ pip install -e .
 A single script handles everything (Miniconda download, VS Build Tools, environment creation, and build):
 
 ```bat
-git clone --recursive https://github.com/mapillary/OpenSfM
+git clone --recursive https://github.com/OpenSfM/OpenSfM
 cd OpenSfM
 setup.bat
 ```
@@ -66,11 +66,7 @@ See [using.md](using.md) for the full list of available commands.
 
 ## Viewer
 
-A standalone 3D viewer is included:
-
-```bash
-./bin/opensfm-desktop
-```
+A web-based 3D viewer is included under `viewer/`. See [using.md](using.md) for details.
 
 ## Building Docker Images
 

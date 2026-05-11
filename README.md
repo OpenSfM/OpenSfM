@@ -5,12 +5,6 @@ OpenSfM
 ## Overview
 OpenSfM is a Structure from Motion library written in Python. The library serves as a processing pipeline for reconstructing camera poses and 3D scenes from multiple images. It consists of basic modules for Structure from Motion (feature detection/matching, minimal solvers) with a focus on building a robust and scalable reconstruction pipeline. It also integrates external sensor (e.g. GPS, accelerometer) measurements for geographical alignment and robustness. A JavaScript viewer is provided to preview the models and debug the pipeline.
 
-<p align="center">
-  <img src="https://opensfm.org/docs/_images/berlin_viewer.jpg" />
-</p>
-
-Checkout this [blog post with more demos](http://blog.mapillary.com/update/2014/12/15/sfm-preview.html)
-
 
 ## Getting Started
 
@@ -36,22 +30,28 @@ bin\opensfm.bat reconstruct path\to\dataset  # Windows
 ```
 ## Documentation
 
-* [Building](doc/building.md)
-* [Using OpenSfM](doc/using.md)
+**Getting Started**
+* [Quickstart](doc/quickstart.md)
+* [Building & Installation](doc/building.md)
+* [Pipeline Commands](doc/using.md)
+
+**User Guide**
 * [Dataset structure](doc/dataset.md)
-* [Geometric models](doc/geometry.md)
-* [Camera coordinate system](doc/camera_coordinate_system.md)
-* [Reconstruction algorithm](doc/reconstruction.md)
-* [Large datasets](doc/large_datasets.md)
-* [Reporting](doc/reporting.md)
-* [Quality report](doc/quality_report.md)
+* [Configuration reference](doc/configuration.md)
+* [Ground control points](doc/ground_control_points.md)
 * [Rig models](doc/rig.md)
+* [Large datasets](doc/large_datasets.md)
+* [Quality report](doc/quality_report.md)
+
+**Reference**
+* [Camera models & coordinate systems](doc/geometry.md)
+* [Reconstruction algorithm](doc/reconstruction.md)
 * [Sensor / calibration database](doc/sensor_database.md)
-* [Dense matching notes](doc/dense_matching.md)
-* [Reconstruction merging notes](doc/merging_notes.md)
+* [Reporting](doc/reporting.md)
+
+**Mathematical Notes**
+* [Dense matching](doc/dense_matching.md)
+* [Reconstruction merging](doc/merging_notes.md)
 
 ## License
-OpenSfM is BSD-style licensed, as found in the LICENSE file.  See also the Facebook Open Source [Terms of Use][] and [Privacy Policy][]
-
-[Terms of Use]: https://opensource.facebook.com/legal/terms (Facebook Open Source - Terms of Use)
-[Privacy Policy]: https://opensource.facebook.com/legal/privacy (Facebook Open Source - Privacy Policy)
+OpenSfM is BSD-style licensed, as found in the LICENSE file.

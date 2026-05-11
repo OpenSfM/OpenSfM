@@ -65,7 +65,22 @@ When GPS is not available, OpenSfM tries to orient the frame so Z is vertical an
 
 The *camera coordinate* frame has the origin at the optical center, X pointing right, Y pointing down, Z pointing forward. A point in front of the camera has positive Z.
 
+In the 3D reconstruction viewer, axes are Red (x), Green (y), Blue (z).
+
+![Camera coordinate system](images/id-rotation.png)
+
 The camera pose is the rotation and translation converting world coordinates to camera coordinates.
+
+#### Pose Representation
+
+The `Pose` class stores rotation as an **axis-angle vector** (3D):
+
+- The **direction** is the rotation axis.
+- The **length** is the rotation angle in radians.
+
+The camera origin in world coordinates is $-R^T t$. Use `shot.pose.get_origin()` / `set_origin()` to read or write camera position directly.
+
+See `opensfm/types.py` (`Reconstruction`, `Shot`) and `opensfm/src/geometry/`.
 
 
 ## Camera Models
