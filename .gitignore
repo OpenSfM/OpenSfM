@@ -18,6 +18,7 @@ uv.lock
 /OpenSfM.egg-info
 .cache
 .pytest_cache
+/.benchmark-worktrees
 eval
 /benchmark_runs
 

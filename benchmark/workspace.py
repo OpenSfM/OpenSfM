@@ -25,6 +25,62 @@ COPYABLE_DIRS = [
 ]
 
 
+def _benchmark_worktree_dir(repo_root: str) -> str:
+    """Return the directory used to store benchmark worktrees."""
+    return os.path.join(repo_root, ".benchmark-worktrees")
+
+
+def _declared_submodule_paths(worktree_path: str) -> List[str]:
+    """List submodule paths declared in the worktree's .gitmodules file."""
+    gitmodules_path = os.path.join(worktree_path, ".gitmodules")
+    if not os.path.isfile(gitmodules_path):
+        return []
+
+    result = subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            ".gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 1 and not result.stdout.strip():
+        return []
+    result.check_returncode()
+
+    paths = []
+    for line in result.stdout.splitlines():
+        _, path = line.split(None, 1)
+        paths.append(path.strip())
+    return paths
+
+
+def _initialize_declared_submodules(worktree_path: str) -> None:
+    """Initialize only submodules declared in .gitmodules.
+
+    Some benchmarked commits may contain stray gitlinks under benchmark
+    artifacts. Restricting the update to declared paths keeps real submodules
+    working without tripping over those invalid entries.
+    """
+    submodule_paths = _declared_submodule_paths(worktree_path)
+    if not submodule_paths:
+        logger.info("No declared submodules found in worktree")
+        return
+
+    logger.info("Initializing %d declared submodule(s) in worktree", len(submodule_paths))
+    subprocess.run(
+        ["git", "submodule", "update", "--init", "--recursive", "--", *submodule_paths],
+        cwd=worktree_path,
+        check=True,
+    )
+
+
 def _resolve_commit(commit: str, repo_root: str) -> str:
     """Resolve a commit reference to a full hash."""
     result = subprocess.run(
@@ -40,7 +96,7 @@ def _resolve_commit(commit: str, repo_root: str) -> str:
 def setup_worktree(commit: str, repo_root: str) -> str:
     """Create a git worktree for the given commit. Returns the worktree path."""
     full_hash = _resolve_commit(commit, repo_root)
-    worktree_dir = os.path.join(repo_root, "benchmark", ".worktrees")
+    worktree_dir = _benchmark_worktree_dir(repo_root)
     os.makedirs(worktree_dir, exist_ok=True)
     worktree_path = os.path.join(worktree_dir, full_hash[:12])
 
@@ -60,12 +116,7 @@ def setup_worktree(commit: str, repo_root: str) -> str:
     )
 
     # Initialize submodules (e.g. pybind11) in the worktree
-    logger.info("Initializing submodules in worktree")
-    subprocess.run(
-        ["git", "submodule", "update", "--init", "--recursive"],
-        cwd=worktree_path,
-        check=True,
-    )
+    _initialize_declared_submodules(worktree_path)
 
     return worktree_path
 
