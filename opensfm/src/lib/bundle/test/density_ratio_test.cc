@@ -30,7 +30,6 @@ TEST(DensityRatio, BundleAdjuster_SetGetGroupDensityRatio) {
 TEST(DensityRatio, BundleAdjuster_GroupFallsBackToDefault) {
   BundleAdjuster ba;
   ba.SetDefaultDensityRatio(0.05);
-  // No per-group override for "PROJ" → should return default
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("PROJ"), 0.05);
 }
 
@@ -39,7 +38,6 @@ TEST(DensityRatio, BundleAdjuster_GroupOverrideBeatsDefault) {
   ba.SetDefaultDensityRatio(0.05);
   ba.SetGroupDensityRatio("GCP2D", 0.2);
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("GCP2D"), 0.2);
-  // Other groups still get the default
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("PROJ"), 0.05);
 }
 
@@ -53,7 +51,6 @@ TEST(DensityRatio, BundleAdjuster_MultipleGroupOverrides) {
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("GCP2D"), 0.1);
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("GCP3D"), 0.2);
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("PROJ"), 0.03);
-  // Unknown group falls back to default
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("GPS"), 0.01);
 }
 
@@ -69,7 +66,6 @@ TEST(DensityRatio, BundleAdjuster_OverwriteGroupDensityRatio) {
 // IRLSSolver density ratio propagation
 // ============================================================================
 
-// Dummy cost function for creating residual blocks
 class DummyCostFunction : public ceres::CostFunction {
  public:
   explicit DummyCostFunction(int num_residuals) {
@@ -93,16 +89,12 @@ TEST(DensityRatio, IRLSSolver_SetGroupDensityRatio) {
 
   auto* cost = new DummyCostFunction(2);
   solver.AddResidualBlock(cost, nullptr, "PROJ", &param);
-
   solver.SetGroupDensityRatio("PROJ", 0.05);
 
-  // Add another group
   auto* cost2 = new DummyCostFunction(2);
   solver.AddResidualBlock(cost2, nullptr, "GCP2D", &param);
   solver.SetGroupDensityRatio("GCP2D", 0.2);
 
-  // Verify via a fresh ComputeWeights call that groups exist and are used
-  // (the strategy will use density_ratio internally)
   auto results = solver.ComputeWeights();
   ASSERT_EQ(results.size(), 2);
 }
@@ -121,13 +113,9 @@ TEST(DensityRatio, IRLSSolver_SetAllGroupsDensityRatio) {
   auto* cost3 = new DummyCostFunction(2);
   solver.AddResidualBlock(cost3, nullptr, "GPS", &param);
 
-  // Set all groups to same ratio
   solver.SetAllGroupsDensityRatio(0.07);
-
-  // Override one group
   solver.SetGroupDensityRatio("GCP2D", 0.3);
 
-  // Verify all groups exist via ComputeWeights
   auto results = solver.ComputeWeights();
   ASSERT_EQ(results.size(), 3);
 }
@@ -135,14 +123,10 @@ TEST(DensityRatio, IRLSSolver_SetAllGroupsDensityRatio) {
 // ============================================================================
 // End-to-end: BundleAdjuster density ratio reaches IRLSSolver
 // ============================================================================
-// This test verifies the full pipeline by setting density ratios on the
-// BundleAdjuster, running it, and checking that the IRLS report is non-empty
-// (meaning the solver ran with the configured groups).
 
 TEST(DensityRatio, BundleAdjuster_EndToEnd_DensityRatioInRun) {
   BundleAdjuster ba;
 
-  // Create a minimal scene: 1 camera, 1 shot, 1 point, 1 observation
   geometry::Camera camera =
       geometry::Camera::CreatePerspectiveCamera(0.8, 0.0, 0.0);
   camera.id = "cam0";
@@ -163,17 +147,14 @@ TEST(DensityRatio, BundleAdjuster_EndToEnd_DensityRatioInRun) {
   ba.AddPointProjectionObservation("shot0", "pt0", Vec2d(0.0, 0.0), 0.004,
                                    false);
 
-  // Also add a GCP observation
   ba.AddPoint("gcp0", Vec3d(1, 0, 5), false);
   ba.AddPointPrior("gcp0", Vec3d(1, 0, 5), Vec3d::Constant(0.01), true);
   ba.AddPointProjectionObservation("shot0", "gcp0", Vec2d(0.01, 0.0), 0.001,
                                    true);
 
-  // Set density ratios
   ba.SetDefaultDensityRatio(0.002);
   ba.SetGroupDensityRatio("GCP2D", 0.5);
 
-  // Verify they survive get
   EXPECT_DOUBLE_EQ(ba.GetDefaultDensityRatio(), 0.002);
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("GCP2D"), 0.5);
   EXPECT_DOUBLE_EQ(ba.GetGroupDensityRatio("PROJ"), 0.002);
@@ -183,11 +164,9 @@ TEST(DensityRatio, BundleAdjuster_EndToEnd_DensityRatioInRun) {
   ba.SetLinearSolverType("DENSE_QR");
   ba.SetUseAnalyticDerivatives(false);
 
-  // Run should not crash
   ba.Run();
 
-  // Brief report should be non-empty (solver ran)
-  EXPECT_FALSE(ba.BriefReport().empty());
+  EXPECT_TRUE(ba.CeresSolverSummary().IsSolutionUsable());
 }
 
 }  // namespace

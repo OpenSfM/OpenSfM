@@ -44,6 +44,7 @@ if (OPENSFM_BUILD_TESTS)
         test/reweighting_test.cc
         test/irls_helpers_test.cc
         test/bundle_adjuster_scene_test.cc
+        test/bundle_adjuster_api_test.cc
         test/density_ratio_test.cc
     )
     add_executable(bundle_test ${BUNDLE_TEST_FILES})
