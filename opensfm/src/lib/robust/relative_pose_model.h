@@ -12,7 +12,7 @@ class RelativePose : public Model<RelativePose, 1, 10> {
   using Error = typename Model<RelativePose, 1, 10>::Error;
   using Type = Eigen::Matrix<double, 3, 4>;
   using Data = std::pair<Eigen::Vector3d, Eigen::Vector3d>;
-  static const int MINIMAL_SAMPLES = 5;
+  static constexpr int MINIMAL_SAMPLES = 5;
 
   static double ThresholdAdapter(const double threshold_angle) {
     return 1.0 - std::cos(threshold_angle);

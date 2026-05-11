@@ -9,13 +9,6 @@ set(ROBUST_FILES
     relative_rotation_model.h
     absolute_pose_known_rotation_model.h
     triangulation_model.h
-    src/absolute_pose_model.cc
-    src/absolute_pose_known_rotation_model.cc
-    src/relative_rotation_model.cc
-    src/relative_pose_model.cc
-    src/similarity_model.cc
-    src/triangulation_model.cc
-    src/line_model.cc
     src/instanciations.cc
 )
 add_library(robust ${ROBUST_FILES})

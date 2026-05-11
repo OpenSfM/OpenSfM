@@ -14,7 +14,7 @@ class Triangulation : public Model<Triangulation, 1, 1> {
   using Type = Eigen::Vector3d;
   using Data =
       std::pair<Eigen::Vector3d, Eigen::Vector3d>;  // (origin, bearing)
-  static const int MINIMAL_SAMPLES = 2;
+  static constexpr int MINIMAL_SAMPLES = 2;
 
   /// Threshold is already an angle (radians), no conversion needed.
   static double ThresholdAdapter(const double threshold_angle) {

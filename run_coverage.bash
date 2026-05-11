@@ -45,8 +45,8 @@ require_command python
 
 PYTEST_ARGS=("$@")
 
-log "Removing cmake_build to ensure coverage instrumentation is rebuilt"
-rm -rf cmake_build
+log "Removing build/ to ensure coverage instrumentation is rebuilt"
+rm -rf build
 
 log "Installing OpenSfM with coverage-enabled CMake settings"
 pip install \
@@ -58,7 +58,7 @@ require_command ctest
 require_command gcovr
 
 log "Running C++ tests"
-ctest --test-dir cmake_build --output-on-failure
+ctest --test-dir build --output-on-failure
 
 if [[ -n "${CONDA_PREFIX:-}" && -f "$CONDA_PREFIX/lib/libtcmalloc.so" ]]; then
     export LD_PRELOAD="$CONDA_PREFIX/lib/libtcmalloc.so${LD_PRELOAD:+:$LD_PRELOAD}"
@@ -77,7 +77,7 @@ python -m pytest \
 log "Generating C++ coverage report"
 gcovr \
     --root . \
-    cmake_build \
+    build \
     --filter 'opensfm/src/lib/' \
     --exclude 'opensfm/src/lib/third_party/' \
     --exclude '.*/test/.*' \

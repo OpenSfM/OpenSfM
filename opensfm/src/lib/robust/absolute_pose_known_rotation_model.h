@@ -11,7 +11,7 @@ class AbsolutePoseKnownRotation
   using Error = typename Model<AbsolutePoseKnownRotation, 1, 1>::Error;
   using Type = Eigen::Vector3d;
   using Data = std::pair<Eigen::Vector3d, Eigen::Vector3d>;
-  static const int MINIMAL_SAMPLES = 2;
+  static constexpr int MINIMAL_SAMPLES = 2;
 
   static double ThresholdAdapter(const double threshold_angle) {
     return 1.0 - std::cos(threshold_angle);

@@ -6,7 +6,7 @@ class Line : public Model<Line, 1, 1> {
  public:
   using Type = Eigen::Vector2d;
   using Data = Eigen::Vector2d;
-  static const int MINIMAL_SAMPLES = 2;
+  static constexpr int MINIMAL_SAMPLES = 2;
 
   template <class IT>
   static int Estimate(IT begin, IT /* end */, Type* models) {

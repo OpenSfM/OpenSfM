@@ -33,7 +33,7 @@ class EssentialMatrix : public Model<EssentialMatrix<E>, 1, 10> {
   using Error = typename Model<EssentialMatrix<E>, 1, 10>::Error;
   using Type = Eigen::Matrix3d;
   using Data = std::pair<Eigen::Vector3d, Eigen::Vector3d>;
-  static const int MINIMAL_SAMPLES = 5;
+  static constexpr int MINIMAL_SAMPLES = 5;
 
   template <class IT>
   static int Estimate(IT begin, IT end, Type* models) {
