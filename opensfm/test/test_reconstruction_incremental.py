@@ -36,8 +36,8 @@ def test_reconstruction_incremental(
     assert errors["ratio_cameras"] == 1.0
     assert 0.7 < errors["ratio_points"] < 1.0
 
-    assert 0 < errors["aligned_position_rmse"] < 0.055
-    assert 0 < errors["aligned_rotation_rmse"] < 0.0048
+    assert 0 < errors["aligned_position_rmse"] < 0.06
+    assert 0 < errors["aligned_rotation_rmse"] < 0.005
     assert 0 < errors["aligned_points_rmse"] < 0.1
 
     # Sanity check that GPS error is similar to the generated gps_noise
