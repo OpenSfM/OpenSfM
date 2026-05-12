@@ -352,6 +352,8 @@ std::string WriteGcpList(
   std::ostringstream out;
   out << std::setprecision(kPrecision);
 
+  geo::CrsTransform ct(crs);
+
   // Header line: CRS
   out << (crs.empty() ? "WGS84" : crs) << "\n";
 
@@ -365,6 +367,18 @@ std::string WriteGcpList(
     }
     if (auto it = gcp.lla_.find("altitude"); it != gcp.lla_.end()) {
       alt = it->second;
+    }
+
+    if (ct.isIdentity()) {
+      // WGS84 format: col1=longitude, col2=latitude
+    } else {
+      // Projected CRS: transform lat/lon to easting/northing for output
+      double easting = 0, northing = 0;
+      if (!ct.inverseTransform(lat, lon, easting, northing)) {
+        continue;
+      }
+      lon = easting;
+      lat = northing;
     }
 
     // One line per observation: lon lat alt px py shot_id gcp_id
