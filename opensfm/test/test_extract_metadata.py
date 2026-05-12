@@ -20,6 +20,9 @@ class FakeData:
         self.saved_camera_models: Dict[str, Any] = {}
         self.load_exif_calls = 0
         self.init_reference_calls = 0
+        self.config = {
+            "processes": 1,
+        }
 
     def images(self) -> List[str]:
         return self._images

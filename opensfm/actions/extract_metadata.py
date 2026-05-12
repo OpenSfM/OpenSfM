@@ -2,9 +2,9 @@
 import copy
 import logging
 from functools import partial
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
-from opensfm import exif
+from opensfm import context, exif
 from opensfm.dataset_base import DataSetBase
 
 
@@ -12,25 +12,46 @@ logger: logging.Logger = logging.getLogger(__name__)
 logging.getLogger("exifread").setLevel(logging.WARNING)
 
 
+def _load_or_extract_exif(
+    image: str,
+    data: DataSetBase,
+    force: bool,
+    exif_overrides: Dict[str, Dict[str, Any]],
+) -> Tuple[str, Dict[str, Any], bool]:
+    if not force and data.exif_exists(image):
+        logger.info("Loading existing EXIF for %s", image)
+        return image, data.load_exif(image), False
+
+    logger.info("Extracting EXIF for %s", image)
+    metadata = _extract_exif(image, data)
+
+    if image in exif_overrides:
+        metadata.update(exif_overrides[image])
+
+    return image, metadata, True
+
+
 def run_dataset(data: DataSetBase, force: bool = False) -> None:
     """Extract metadata from images' EXIF tag."""
 
-    exif_overrides = {}
+    exif_overrides: Dict[str, Dict[str, Any]] = {}
     if data.exif_overrides_exists():
         exif_overrides = data.load_exif_overrides()
 
     camera_models = {}
-    for image in data.images():
-        if not force and data.exif_exists(image):
-            logging.info("Loading existing EXIF for {}".format(image))
-            d = data.load_exif(image)
-        else:
-            logging.info("Extracting EXIF for {}".format(image))
-            d = _extract_exif(image, data)
-
-            if image in exif_overrides:
-                d.update(exif_overrides[image])
-
+    image_metadata = context.parallel_map(
+        partial(
+            _load_or_extract_exif,
+            data=data,
+            force=force,
+            exif_overrides=exif_overrides,
+        ),
+        data.images(),
+        data.config["processes"],
+        backend="multiprocessing",
+    )
+    for image, d, should_save in image_metadata:
+        if should_save:
             data.save_exif(image, d)
 
         if d["camera"] not in camera_models:
