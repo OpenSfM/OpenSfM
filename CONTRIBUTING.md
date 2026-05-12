@@ -10,14 +10,10 @@ We actively welcome your pull requests.
 3. If you've changed APIs, update the documentation.
 4. Ensure the test suite passes.
 5. Make sure your code lints.
-6. If you haven't already, complete the Contributor License Agreement ("CLA").
-
-
 
 ## Issues
 We use GitHub issues to track public bugs. Please ensure your description is
 clear and has sufficient instructions to be able to reproduce the issue.
-
 
 ## License
 By contributing to OpenSfM, you agree that your contributions will be licensed
