@@ -1257,19 +1257,26 @@ def generate_binary_cache(
     # matching doesn't repeat the (N, 128) @ (128, 128) matmul.
     segmentation_in_desc = config.get(
         "matching_use_segmentation", False)
-    binary_cache: Dict[str, NDArray] = {}
-    all_images = set()
-    for im1, im2 in pairs:
-        all_images.add(im1)
-        all_images.add(im2)
-    for im in all_images:
+    all_images = list(set(
+        im for pair in pairs for im in pair))
+
+    def _binarize_one(im: str) -> Tuple[str, Optional[NDArray]]:
         fd = feature_loader.instance.load_all_data(
             data, im, masked=True,
             segmentation_in_descriptor=segmentation_in_desc,
         )
         if fd is not None and fd.descriptors is not None:
             d = fd.descriptors.astype(np.float32)
-            binary_cache[im] = binarize_descriptors(d, P, t)
+            return im, binarize_descriptors(d, P, t)
+        return im, None
+
+    processes = config.get("processes", 1)
+    processes = context.processes_that_fit_in_memory(processes, 512)
+    results = context.parallel_map(_binarize_one, all_images, processes, 2)
+    binary_cache: Dict[str, NDArray] = {}
+    for im, binary in results:
+        if binary is not None:
+            binary_cache[im] = binary
 
     return binary_cache
 
