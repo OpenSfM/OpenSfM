@@ -11,7 +11,10 @@ instead builds ad-hoc tracks from pairwise matches on the fly.
 
 import logging
 import multiprocessing as mp
+import os
+import random
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from timeit import default_timer as timer
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -25,6 +28,7 @@ from opensfm import (
     multiview,
     pairs_selection,
     pygeometry,
+    pymap,
     reconstruction as sfm,
     reconstruction_helpers as helpers,
     types,
@@ -253,6 +257,13 @@ class CandidateGraph:
             if cur is None or count > cur[1]:
                 self._best_partner[neighbor] = (image, count)
 
+    def unmark_reconstructed(self, image: str) -> None:
+        """Reverse score updates when *image* is removed from reconstruction."""
+        for neighbor, count in self._adj.get(image, {}).items():
+            self._score[neighbor] = max(
+                0, self._score.get(neighbor, 0) - count)
+            # best_partner may become stale but that's harmless
+
     def pop_best_candidate(
         self, remaining: Set[str]
     ) -> Optional[Tuple[str, str, int]]:
@@ -320,9 +331,13 @@ def _resect_image(
     except Exception:
         return None
 
-    R = Rt[:3, :3]
-    t = Rt[:, 3]
-    pose = pygeometry.Pose(cv2.Rodrigues(R)[0].ravel(), t)
+    # absolute_pose_ransac returns camera-to-world [R_c2w | origin].
+    # Pose() expects world-to-camera [R_w2c | t_w2c].
+    R_c2w = Rt[:3, :3]
+    origin = Rt[:, 3]
+    R_w2c = R_c2w.T
+    t_w2c = -R_w2c @ origin
+    pose = pygeometry.Pose(cv2.Rodrigues(R_w2c)[0].ravel(), t_w2c)
     return pose
 
 
@@ -434,33 +449,239 @@ def _linear_triangulation(
     return (p1 + p2) / 2.0
 
 
-def _save_per_image_mesh(
-    data: PreviewDataset,
+def _populate_observations(
+    reconstruction: types.Reconstruction,
+    track_builder: AdHocTrackBuilder,
+    features_cache: Dict[str, NDArray],
+) -> int:
+    """Register 2D observations on the C++ map for all reconstructed shots/points.
+
+    Adds observations that are not yet registered.  Needed so that bundle()
+    sees projections.
+
+    Returns the number of observations added.
+    """
+    NO_VALUE = pymap.Observation.NO_SEMANTIC_VALUE
+    the_map = reconstruction.map
+
+    n_obs = 0
+    reconstructed_shots = set(reconstruction.shots.keys())
+    for pid in list(reconstruction.points.keys()):
+        lm = reconstruction.points[pid]
+        already_observed = set(
+            s.id for s in lm.get_observations().keys()
+        ) if lm.number_of_observations() > 0 else set()
+        members = track_builder.get_track_members(pid)
+        for member_im, member_fidx in members:
+            if member_im not in reconstructed_shots:
+                continue
+            if member_im in already_observed:
+                continue
+            if member_im not in features_cache:
+                continue
+            feat = features_cache[member_im]
+            x, y = float(feat[member_fidx, 0]), float(feat[member_fidx, 1])
+            s = float(feat[member_fidx, 2]) if feat.shape[1] > 2 else 0.0
+            obs = pymap.Observation(x, y, s, 0, 0, 0, member_fidx,
+                                    NO_VALUE, NO_VALUE)
+            the_map.add_observation(member_im, pid, obs)
+            n_obs += 1
+    return n_obs
+
+
+def _periodic_bundle_and_align(
+    reconstruction: types.Reconstruction,
+    track_builder: AdHocTrackBuilder,
+    features_cache: Dict[str, NDArray],
+    camera_priors: Dict[str, pygeometry.Camera],
+    rig_camera_priors: Dict[str, pymap.RigCamera],
+    config: Dict[str, Any],
+    threshold: float,
+    data: Optional[PreviewDataset] = None,
+) -> None:
+    """Run bundle adjustment + outlier removal + retriangulation + alignment.
+
+    Follows the standard pipeline pattern:
+      populate observations → bundle → remove_outliers → retriangulate → bundle
+    """
+    t0 = timer()
+
+    n_obs = _populate_observations(
+        reconstruction, track_builder, features_cache,
+    )
+    logger.info(
+        "Preview: populated %d observations for %d shots, %d points",
+        n_obs, len(reconstruction.shots), len(reconstruction.points),
+    )
+
+    # First pass: bundle + outlier removal
+    sfm.bundle(reconstruction, camera_priors,
+               rig_camera_priors, None, 0, config)
+    sfm.remove_outliers(reconstruction, config)
+
+    align_reconstruction(reconstruction, [], config)
+
+    logger.info(
+        "Preview: bundle+align on %d shots, %d points in %.2fs",
+        len(reconstruction.shots), len(reconstruction.points),
+        timer() - t0,
+    )
+
+
+def _remove_outlier_points(
+    reconstruction: types.Reconstruction,
+    features_cache: Dict[str, NDArray],
+    track_builder: AdHocTrackBuilder,
+    camera_priors: Dict[str, pygeometry.Camera],
+    threshold: float,
+    point_ids: Optional[Set[str]] = None,
+) -> int:
+    """Remove triangulated points with high reprojection error or unreasonable distance.
+
+    Args:
+        point_ids: If given, only check these points. Otherwise check all.
+
+    Returns the number of removed points.
+    """
+    max_reproj = 2.0 * threshold  # 2x the five-point threshold
+
+    # Camera centroid and distance envelope
+    origins = np.array(
+        [shot.pose.get_origin() for shot in reconstruction.shots.values()]
+    )
+    if len(origins) == 0:
+        return 0
+    centroid = origins.mean(axis=0)
+    max_cam_dist = float(np.max(np.linalg.norm(origins - centroid, axis=1)))
+    dist_limit = max(100.0 * max(max_cam_dist, 1.0), 50.0)
+
+    ids_to_check = point_ids if point_ids is not None else set(
+        reconstruction.points.keys())
+    to_remove: List[str] = []
+
+    for pid in ids_to_check:
+        if pid not in reconstruction.points:
+            continue
+        coords = reconstruction.points[pid].coordinates
+
+        # Distance filter
+        if np.linalg.norm(coords - centroid) > dist_limit:
+            to_remove.append(pid)
+            continue
+
+        # Reprojection error filter
+        members = track_builder.get_track_members(pid)
+        errors: List[float] = []
+        for member_im, member_fidx in members:
+            if member_im not in reconstruction.shots:
+                continue
+            if member_im not in features_cache:
+                continue
+            shot = reconstruction.shots[member_im]
+            projected = shot.project(coords)
+            observed = features_cache[member_im][member_fidx, :2]
+            errors.append(float(np.linalg.norm(projected - observed)))
+
+        if errors and np.mean(errors) > max_reproj:
+            to_remove.append(pid)
+
+    for pid in to_remove:
+        reconstruction.remove_point(pid)
+
+    return len(to_remove)
+
+
+def _compute_per_image_mesh(
     reconstruction: types.Reconstruction,
     image: str,
-) -> None:
-    """Generate and save a per-image Delaunay mesh."""
+    track_builder: AdHocTrackBuilder,
+) -> Optional[Tuple[List[List[float]], List[List[int]]]]:
+    """Compute a per-image Delaunay mesh from track-visible points.
+
+    Returns (vertices, faces) or None if insufficient data.
+    """
     if image not in reconstruction.shots:
-        return
+        return None
 
     shot = reconstruction.shots[image]
 
-    # Collect points visible in this shot
+    # Collect 3D coordinates of tracks visible in this image
+    image_tracks = track_builder.get_tracks_for_image(image)
     point_coords_list: List[NDArray] = []
-    for pid, point in reconstruction.points.items():
-        coord = point.coordinates
-        projected = shot.project(coord)
-        if not np.isnan(projected).any():
-            point_coords_list.append(coord)
+    for tid in image_tracks:
+        if tid not in reconstruction.points:
+            continue
+        point_coords_list.append(reconstruction.points[tid].coordinates)
 
     if len(point_coords_list) < 3:
-        return
+        return None
 
     point_coords = np.array(point_coords_list)
     vertices, faces = mesh.triangle_mesh_from_points(shot, point_coords)
 
     if vertices and faces:
-        data.save_preview_mesh(image, vertices, faces)
+        return vertices, faces
+    return None
+
+
+def _snapshot_per_image_reconstruction(
+    reconstruction: types.Reconstruction,
+    image: str,
+    track_builder: AdHocTrackBuilder,
+) -> Optional[types.Reconstruction]:
+    """Build a lightweight reconstruction containing only one shot and its visible points."""
+    if image not in reconstruction.shots:
+        return None
+
+    mini = types.Reconstruction()
+    mini.reference = reconstruction.reference
+    mini.cameras = reconstruction.cameras
+
+    shot = reconstruction.shots[image]
+    mini.create_shot(image, shot.camera.id, shot.pose)
+
+    for tid in track_builder.get_tracks_for_image(image):
+        if tid in reconstruction.points:
+            mini.create_point(tid, reconstruction.points[tid].coordinates)
+
+    return mini
+
+
+class BackgroundSaver:
+    """Push serialization + file writes to a thread pool."""
+
+    def __init__(self, max_workers: int = 4) -> None:
+        self._pool = ThreadPoolExecutor(max_workers=max_workers)
+
+    def save_mesh(
+        self,
+        data: PreviewDataset,
+        image: str,
+        vertices: List[List[float]],
+        faces: List[List[int]],
+    ) -> None:
+        self._pool.submit(data.save_preview_mesh, image, vertices, faces)
+
+    def save_per_image_reconstruction(
+        self,
+        data: PreviewDataset,
+        image: str,
+        mini_reconstruction: types.Reconstruction,
+    ) -> None:
+        self._pool.submit(
+            data.save_preview_reconstruction, image, mini_reconstruction
+        )
+
+    def save_full_reconstruction(
+        self,
+        data: PreviewDataset,
+        reconstructions: List[types.Reconstruction],
+    ) -> None:
+        self._pool.submit(data.save_reconstruction, reconstructions)
+
+    def flush(self) -> None:
+        """Wait for all pending saves to complete."""
+        self._pool.shutdown(wait=True)
 
 
 # ---------------------------------------------------------------------------
@@ -541,19 +762,46 @@ def _feature_extraction_worker(
     ordered_images: List[str],
     feat_queue: "mp.Queue[Optional[str]]",
 ) -> None:
-    """Process 1: extract features one image at a time in the given order."""
+    """Process 1: extract features in batches, respecting the given order.
+
+    Batches images so the internal parallel pool is fully utilized,
+    then pushes completed images to the queue in order.
+    """
     data = DataSet(data_path)
     data.config.update(config_override)
+    batch_size = max(1, config_override.get("processes", 1))
 
-    for image in ordered_images:
-        if data.features_exist(image):
+    i = 0
+    while i < len(ordered_images):
+        batch_end = min(i + batch_size, len(ordered_images))
+        batch = ordered_images[i:batch_end]
+
+        # Separate already-extracted from needing extraction
+        need_extract: List[str] = []
+        for image in batch:
+            if data.features_exist(image):
+                pass  # will push to queue below
+            else:
+                need_extract.append(image)
+
+        # Extract the batch in one call (uses internal pool of N workers)
+        if need_extract:
+            try:
+                features_processing.run_features_processing(
+                    data, need_extract, False
+                )
+            except Exception:
+                logger.exception(
+                    "Feature extraction failed for batch of %d images",
+                    len(need_extract),
+                )
+
+        # Push all images in order
+        for image in batch:
             feat_queue.put(image)
-            continue
-        try:
-            features_processing.run_features_processing(data, [image], False)
-            feat_queue.put(image)
-        except Exception:
-            logger.exception("Feature extraction failed for %s", image)
+
+        i = batch_end
+
     feat_queue.put(None)  # sentinel
 
 
@@ -584,6 +832,10 @@ def _matching_worker(
         neighbors = putative_neighbors.get(image, [])
         ready_neighbors = [
             n for n in neighbors if n in features_ready and n != image]
+
+        # Cap to 10 random neighbors to keep matching fast
+        if len(ready_neighbors) > 10:
+            ready_neighbors = random.sample(ready_neighbors, 10)
 
         if ready_neighbors:
             try:
@@ -621,6 +873,8 @@ def _streaming_incremental_reconstruction(
     config.update(PREVIEW_CONFIG_OVERRIDES)
     report: Dict[str, Any] = {"steps": [], "num_images": 0}
 
+    saver = BackgroundSaver(max_workers=4)
+
     camera_priors = data.load_camera_models()
     rig_camera_priors = data.load_rig_cameras()
 
@@ -637,6 +891,9 @@ def _streaming_incremental_reconstruction(
     deferred_images: List[str] = []  # images waiting for bootstrap
     threshold = config["five_point_algo_threshold"]
     min_inliers = config.get("five_point_algo_min_inliers", 50)
+    debug_step: List[int] = [0]  # mutable counter for debug dump filenames
+    images_since_bundle: List[int] = [0]  # mutable counter for periodic BA
+    BUNDLE_EVERY_N = 10
 
     def _ingest_image(image: str) -> None:
         """Load features + matches for a newly-matched image into caches."""
@@ -698,6 +955,9 @@ def _streaming_incremental_reconstruction(
         _add_shot(data, reconstruction, im1, pygeometry.Pose())
         _add_shot(data, reconstruction, im2, pygeometry.Pose(R, t))
 
+        # Align to GPS frame BEFORE triangulation (like standard pipeline)
+        align_reconstruction(reconstruction, [], config)
+
         _triangulate_tracks_for_image(
             reconstruction, im1, features_cache, track_builder, camera_priors, data
         )
@@ -705,24 +965,35 @@ def _streaming_incremental_reconstruction(
             reconstruction, im2, features_cache, track_builder, camera_priors, data
         )
 
+        # Remove bad triangulations (no C++ BA available without observations)
+        n_before = len(reconstruction.points)
+        _remove_outlier_points(
+            reconstruction, features_cache, track_builder, camera_priors, threshold,
+        )
+        logger.info(
+            "Preview bootstrap: %d points triangulated, %d after outlier removal",
+            n_before, len(reconstruction.points),
+        )
+
         if len(reconstruction.points) < min_inliers:
             reconstruction = None
             return False
-
-        sfm.bundle_shot_poses(
-            reconstruction, {im2}, camera_priors, rig_camera_priors, config,
-        )
-        align_reconstruction(reconstruction, [], config)
 
         reconstructed_images.add(im1)
         reconstructed_images.add(im2)
         candidate_graph.mark_reconstructed(im1)
         candidate_graph.mark_reconstructed(im2)
 
-        data.save_preview_reconstruction(im1, reconstruction)
-        data.save_preview_reconstruction(im2, reconstruction)
-        _save_per_image_mesh(data, reconstruction, im1)
-        _save_per_image_mesh(data, reconstruction, im2)
+        # Snapshot + save in background
+        for im in (im1, im2):
+            mini = _snapshot_per_image_reconstruction(
+                reconstruction, im, track_builder)
+            if mini is not None:
+                saver.save_per_image_reconstruction(data, im, mini)
+            mesh_result = _compute_per_image_mesh(
+                reconstruction, im, track_builder)
+            if mesh_result is not None:
+                saver.save_mesh(data, im, mesh_result[0], mesh_result[1])
 
         logger.info(
             "Preview: bootstrapped with %s and %s (%d points)",
@@ -730,6 +1001,13 @@ def _streaming_incremental_reconstruction(
         )
         report["bootstrap_pair"] = (im1, im2)
         report["bootstrap_points"] = len(reconstruction.points)
+
+        # Debug: synchronous dump of growing reconstruction
+        # debug_step[0] += 1
+        # data.save_reconstruction(
+        #     [reconstruction],
+        #     filename=f"reconstruction_step_{debug_step[0]:04d}.json",
+        # )
         return True
 
     def _try_add_image(image: str) -> bool:
@@ -764,9 +1042,16 @@ def _streaming_incremental_reconstruction(
             reconstruction, image, features_cache, track_builder, camera_priors, data,
         )
 
-        sfm.bundle_shot_poses(
-            reconstruction, {image}, camera_priors, rig_camera_priors, config,
+        # Remove bad triangulations by reprojection error
+        new_point_ids = set(
+            tid for tid in track_builder.get_tracks_for_image(image)
+            if tid in reconstruction.points
         )
+        n_removed = _remove_outlier_points(
+            reconstruction, features_cache, track_builder, camera_priors,
+            threshold, point_ids=new_point_ids,
+        )
+        new_points -= n_removed
 
         t_elapsed = timer() - t_start
         step = len(report["steps"]) + 1
@@ -777,8 +1062,22 @@ def _streaming_incremental_reconstruction(
             len(reconstruction.shots), len(reconstruction.points),
         )
 
-        data.save_preview_reconstruction(image, reconstruction)
-        _save_per_image_mesh(data, reconstruction, image)
+        # Snapshot + push to background saver (non-blocking)
+        mini = _snapshot_per_image_reconstruction(
+            reconstruction, image, track_builder)
+        if mini is not None:
+            saver.save_per_image_reconstruction(data, image, mini)
+        mesh_result = _compute_per_image_mesh(
+            reconstruction, image, track_builder)
+        if mesh_result is not None:
+            saver.save_mesh(data, image, mesh_result[0], mesh_result[1])
+
+        # Debug: synchronous dump of growing reconstruction
+        # debug_step[0] += 1
+        # data.save_reconstruction(
+        #     [reconstruction],
+        #     filename=f"reconstruction_step_{debug_step[0]:04d}.json",
+        # )
 
         report["steps"].append({
             "image": image,
@@ -787,9 +1086,26 @@ def _streaming_incremental_reconstruction(
             "total_points": len(reconstruction.points),
             "time": round(t_elapsed, 3),
         })
+
+        # Periodic bundle adjustment + alignment
+        # images_since_bundle[0] += 1
+        # if images_since_bundle[0] >= BUNDLE_EVERY_N:
+        #     _periodic_bundle_and_align(
+        #         reconstruction, track_builder, features_cache,
+        #         camera_priors, rig_camera_priors, config, threshold,
+        #         data=data,
+        #     )
+        #     images_since_bundle[0] = 0
+
         return True
 
     # --- Main consumption loop ---
+    min_images_for_bootstrap = max(2, len(all_images) // 10)
+    logger.info(
+        "Preview: waiting for %d images (10%%) before bootstrapping",
+        min_images_for_bootstrap,
+    )
+
     while True:
         image = match_queue.get()
         if image is None:
@@ -798,17 +1114,59 @@ def _streaming_incremental_reconstruction(
         _ingest_image(image)
 
         if reconstruction is None:
-            # Not yet bootstrapped — try every pair we have so far
+            # Not yet bootstrapped — accumulate until 10% of images have matches
             deferred_images.append(image)
+            matched_count = sum(
+                1 for im in deferred_images if im in match_cache)
+            if matched_count < min_images_for_bootstrap:
+                continue
+
             bootstrapped = False
+            # Score pairs by reconstructability (parallax), not just match count
+            bootstrap_candidates: List[Tuple[str, str, float]] = []
+            seen_pairs: Set[Tuple[str, str]] = set()
+            rec_threshold = 4 * threshold
             for im in deferred_images:
                 if im not in match_cache:
                     continue
-                for other in match_cache[im]:
-                    if other in features_cache and _try_bootstrap(im, other):
-                        bootstrapped = True
-                        break
-                if bootstrapped:
+                for other, marr in match_cache[im].items():
+                    if other not in features_cache or im not in features_cache:
+                        continue
+                    pair_key = (min(im, other), max(im, other))
+                    if pair_key in seen_pairs:
+                        continue
+                    seen_pairs.add(pair_key)
+                    n_matches = len(marr)
+                    if n_matches < min_inliers:
+                        continue
+                    # Build common feature arrays from match indices
+                    idxs = marr[:, :2].astype(int)
+                    p1 = features_cache[im][idxs[:, 0], :2]
+                    p2 = features_cache[other][idxs[:, 1], :2]
+                    if len(p1) < min_inliers:
+                        continue
+                    # Compute reconstructability: pairs with real parallax
+                    # (not pure rotation) score higher
+                    cam1 = camera_priors[data.load_exif(im)["camera"]]
+                    cam2 = camera_priors[data.load_exif(other)["camera"]]
+                    _, rot_inliers = sfm.two_view_reconstruction_rotation_only(
+                        p1, p2, cam1, cam2, rec_threshold
+                    )
+                    score = sfm.pairwise_reconstructability(
+                        len(p1), len(rot_inliers)
+                    )
+                    if score > 0:
+                        bootstrap_candidates.append((im, other, score))
+            bootstrap_candidates.sort(key=lambda x: -x[2])
+
+            logger.info(
+                "Preview: %d candidate pairs scored for bootstrap",
+                len(bootstrap_candidates),
+            )
+
+            for im1, im2, score in bootstrap_candidates:
+                if _try_bootstrap(im1, im2):
+                    bootstrapped = True
                     break
 
             if bootstrapped:
@@ -838,16 +1196,23 @@ def _streaming_incremental_reconstruction(
                 break
 
     if reconstruction is not None:
+        # Final bundle + align
+        _periodic_bundle_and_align(
+            reconstruction, track_builder, features_cache,
+            camera_priors, rig_camera_priors, config, threshold,
+            data=data,
+        )
         report["num_images"] = len(reconstruction.shots)
         report["num_points"] = len(reconstruction.points)
-        data.save_reconstruction([reconstruction])
+        saver.save_full_reconstruction(data, [reconstruction])
         logger.info(
-            "Preview done: %d images, %d points",
+            "Preview done: %d images, %d points — flushing saves",
             len(reconstruction.shots), len(reconstruction.points),
         )
     else:
         logger.warning("Preview: could not bootstrap any pair")
 
+    saver.flush()
     return report, reconstruction
 
 
@@ -895,17 +1260,26 @@ def run_preview_dataset(data: DataSet) -> Dict[str, Any]:
     report["ordering_time"] = round(timer() - t0, 3)
 
     # 2-4. Launch streaming pipeline ----------------------------------------
+    # Split available cores: n/3 for features, n/3 for matching, n/3 for reconstruction
+    n_cpus = os.cpu_count() or 4
+    per_stage = max(1, n_cpus // 3)
+    stage_overrides = {**PREVIEW_CONFIG_OVERRIDES, "processes": per_stage}
+    logger.info(
+        "Preview: %d CPUs available, allocating %d per stage",
+        n_cpus, per_stage,
+    )
+
     feat_queue: mp.Queue = mp.Queue(maxsize=50)
     match_queue: mp.Queue = mp.Queue(maxsize=50)
 
     feat_proc = mp.Process(
         target=_feature_extraction_worker,
-        args=(data.data_path, PREVIEW_CONFIG_OVERRIDES,
+        args=(data.data_path, stage_overrides,
               ordered_images, feat_queue),
     )
     match_proc = mp.Process(
         target=_matching_worker,
-        args=(data.data_path, PREVIEW_CONFIG_OVERRIDES,
+        args=(data.data_path, stage_overrides,
               neighbors_lists, feat_queue, match_queue),
     )
 
