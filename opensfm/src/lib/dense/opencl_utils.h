@@ -195,6 +195,33 @@ class CLContext {
         cpus.insert(cpus.end(), devs.begin(), devs.end());
       }
 
+      // When there are multiple GPUs, drop Intel integrated GPUs —
+      // they share system memory and are much slower than discrete GPUs.
+      if (gpus.size() > 1) {
+        std::vector<cl::Device> discrete;
+        for (auto& d : gpus) {
+          std::string vendor = d.getInfo<CL_DEVICE_VENDOR>();
+          // Case-insensitive "intel" check.
+          bool is_intel = false;
+          for (size_t i = 0; i + 4 < vendor.size() + 1; ++i) {
+            if ((vendor[i] | 0x20) == 'i' && (vendor[i + 1] | 0x20) == 'n' &&
+                (vendor[i + 2] | 0x20) == 't' &&
+                (vendor[i + 3] | 0x20) == 'e' &&
+                (vendor[i + 4] | 0x20) == 'l') {
+              is_intel = true;
+              break;
+            }
+          }
+          if (!is_intel) {
+            discrete.push_back(std::move(d));
+          }
+        }
+        if (!discrete.empty()) {
+          gpus = std::move(discrete);
+        }
+        // else: all GPUs are Intel, keep them all.
+      }
+
       devices_.reserve(gpus.size() + cpus.size());
       for (auto& d : gpus) {
         devices_.emplace_back(std::move(d));

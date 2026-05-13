@@ -98,11 +98,13 @@ class OpenSfMConfig:
     # Params for general matching
     ##################################
     # Ratio test for matches
-    lowes_ratio: float = 0.8
-    # FLANN, BRUTEFORCE, or WORDS
-    matcher_type: str = "FLANN"
+    lowes_ratio: float = 0.85
+    # FLANN, BRUTEFORCE, WORDS, OPENCL_HAMMING or OPENCL_BF
+    matcher_type: str = "OPENCL_HAMMING"
     # Match symmetrically or one-way
     symmetric_matching: bool = True
+    # Number of image pairs used to train the binary projection (OPENCL_HAMMING)
+    binary_training_pairs: int = 100
 
     ##################################
     # Params for FLANN matching

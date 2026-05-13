@@ -1,5 +1,8 @@
 # pyre-strict
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from timeit import default_timer as timer
 from typing import Any, Dict, Generator, List, Optional, Sized, Tuple
 
@@ -60,6 +63,48 @@ def match_images(
     )
 
 
+def match_pairs_with_binary_projection_batched(
+        data: DataSetBase,
+        pairs: List[Tuple[str, str]],
+        config: Dict[str, Any],
+        cameras: Dict[str, Any],
+        exifs: Dict[str, Any]) -> List[NDArray]:
+    """
+    Perform pair matchings using learned binary projection and batched GPU matching.
+
+    Args:
+    data: dataset to load features from
+    pairs: list of image pairs to match
+    config: config parameters, must contain "lowes_ratio" and binary matching parameters
+    cameras: camera models for the images
+    exifs: exif data for the images
+    """
+    binary_cache = generate_binary_cache(
+        data, pairs, config, cameras, exifs)
+    logger.info("Binarized descriptors for %d images", len(binary_cache))
+
+    bin1_list = []
+    bin2_list = []
+    total_features = 0
+    for im1, im2 in pairs:
+        b1 = binary_cache.get(im1, np.zeros((0, 4), dtype=np.uint32))
+        b2 = binary_cache.get(im2, np.zeros((0, 4), dtype=np.uint32))
+        bin1_list.append(b1)
+        bin2_list.append(b2)
+        total_features += len(b1) + len(b2)
+    logger.info(
+        "Batched Hamming matching %d pairs (%d total features) on GPU",
+        len(pairs), total_features)
+    time_start = time.time()
+    batch_results = pyfeatures.match_hamming_opencl_batch_symmetric(
+        bin1_list, bin2_list, config["lowes_ratio"], 0)
+    logger.info(
+        "Batched Hamming matching completed in %.2f seconds", time.time() - time_start
+    )
+
+    return batch_results
+
+
 def match_images_with_pairs(
     data: DataSetBase,
     config_override: Dict[str, Any],
@@ -69,7 +114,6 @@ def match_images_with_pairs(
 ) -> Dict[Tuple[str, str], List[Tuple[int, int]]]:
     """Perform pair matchings given pairs."""
     cameras = data.load_camera_models()
-    args = list(match_arguments(pairs, data, config_override, cameras, exifs, poses))
 
     # Perform all pair matchings in parallel
     start = timer()
@@ -77,9 +121,51 @@ def match_images_with_pairs(
     processes = config_override.get("processes", data.config["processes"])
     mem_per_process = 512
     jobs_per_process = 2
-    processes = context.processes_that_fit_in_memory(processes, mem_per_process)
-    logger.info("Computing pair matching with %d processes" % processes)
-    matches = context.parallel_map(match_unwrap_args, args, processes, jobs_per_process)
+    processes = context.processes_that_fit_in_memory(
+        processes, mem_per_process)
+    logger.info("Using {} processes for matching".format(processes))
+
+    # Fallback to FLANN is GPU matching is requested but not available.
+    overriden_config = data.config.copy()
+    overriden_config.update(config_override)
+    required_gpu = overriden_config["matcher_type"].upper() in [
+        "OPENCL_HAMMING", "OPENCL_BF"]
+    required_opencl_hamming = overriden_config["matcher_type"].upper() in [
+        "OPENCL_HAMMING"]
+
+    use_gpu = required_gpu
+    if required_gpu and not pyfeatures.opencl_matching_available():
+        logger.warning(
+            "GPU matching requested but OpenCL is not available. Falling back to CPU FLANN."
+        )
+        overriden_config["matcher_type"] = "FLANN"
+        use_gpu = False
+    if use_gpu:
+        num_devices = pyfeatures.opencl_num_devices()
+        logger.info(
+            "Computing pair matching on GPU (OpenCL, %d device(s))" % num_devices
+        )
+        overriden_config["_opencl_device_idx"] = 0
+
+    if use_gpu and required_opencl_hamming:
+        batch_results = match_pairs_with_binary_projection_batched(
+            data, pairs, overriden_config, cameras, exifs
+        )
+        args = list(match_arguments(
+            pairs, data, overriden_config, cameras, exifs, poses, batch_results))
+        use_gpu = False  # do robust matching on CPU, as GPU matching already done
+    else:
+        # Build per-pair arguments
+        args = list(match_arguments(
+            pairs, data, overriden_config, cameras, exifs, poses, None))
+
+    if use_gpu:
+        logger.info("Computing pair matching with GPU 0")
+        matches = [match_unwrap_args(a) for a in args]
+    else:
+        logger.info("Computing pair matching with %d processes" % processes)
+        matches = context.parallel_map(
+            match_unwrap_args, args, processes, jobs_per_process)
     logger.info(
         "Matched {} pairs {} in {} seconds ({} seconds/pair).".format(
             len(pairs),
@@ -160,6 +246,7 @@ def match_arguments(
     cameras: Dict[str, pygeometry.Camera],
     exifs: Dict[str, pygeometry.Camera],
     poses: Optional[Dict[str, pygeometry.Pose]],
+    desc_matches: Optional[List[NDArray]],
 ) -> Generator[
     Tuple[
         str,
@@ -169,13 +256,14 @@ def match_arguments(
         DataSetBase,
         Dict[str, Any],
         Optional[Dict[str, pygeometry.Pose]],
-    ],
+        Optional[NDArray]],
     None,
     None,
 ]:
     """Generate arguments for parallel processing of pair matching"""
-    for im1, im2 in pairs:
-        yield im1, im2, cameras, exifs, data, config_override, poses
+    for i, (im1, im2) in enumerate(pairs):
+        matches = desc_matches[i] if desc_matches else None
+        yield im1, im2, cameras, exifs, data, config_override, poses, matches
 
 
 def match_unwrap_args(
@@ -187,6 +275,7 @@ def match_unwrap_args(
         DataSetBase,
         Dict[str, Any],
         Optional[Dict[str, pygeometry.Pose]],
+        Optional[NDArray],
     ],
 ) -> Tuple[str, str, NDArray]:
     """Wrapper for parallel processing of pair matching.
@@ -201,15 +290,23 @@ def match_unwrap_args(
     data: DataSetBase = args[4]
     config_override = args[5]
     poses = args[6]
+    desc_matches = args[7]
     if poses:
         pose1 = poses[im1]
         pose2 = poses[im2]
         pose = pose2.relative_to(pose1)
     else:
         pose = None
+
     camera1 = cameras[exifs[im1]["camera"]]
     camera2 = cameras[exifs[im2]["camera"]]
-    matches = match(im1, im2, camera1, camera2, data, config_override, pose)
+
+    if desc_matches is not None:
+        matches = match_robust(im1, im2, desc_matches,
+                               camera1, camera2, data, config_override, False)
+    else:
+        matches = match(im1, im2, camera1, camera2,
+                        data, config_override, pose)
     return im1, im2, matches
 
 
@@ -313,7 +410,8 @@ def _match_descriptors_guided_impl(
         relative_pose,
         overriden_config["guided_matching_threshold"],
     )
-    matches = match_brute_force_symmetric(d1, d2, overriden_config, epipolar_mask)
+    matches = match_brute_force_symmetric(
+        d1, d2, overriden_config, epipolar_mask)
 
     # Adhoc filters
     if overriden_config["matching_use_filters"]:
@@ -371,7 +469,12 @@ def _match_descriptors_impl(
         return dummy_ret
 
     symmetric_matching = overriden_config["symmetric_matching"]
-    if matcher_type == "WORDS":
+    if matcher_type == "OPENCL_BF":
+        if symmetric_matching:
+            matches = match_brute_force_symmetric(d1, d2, overriden_config)
+        else:
+            matches = match_brute_force(d1, d2, overriden_config)
+    elif matcher_type == "WORDS":
         words1 = feature_loader.instance.load_words(data, im1, masked=True)
         words2 = feature_loader.instance.load_words(data, im2, masked=True)
         if words1 is None or words2 is None:
@@ -500,14 +603,11 @@ def match_robust(
     np_matches = np.array(matches, dtype=int)
     t = timer()
     rmatches = _match_robust_impl(
-        im1,
-        im2,
         features_data1.points,
         features_data2.points,
         np_matches,
         camera1,
         camera2,
-        data,
         overriden_config,
     )
     time_robust_matching = timer() - t
@@ -540,19 +640,17 @@ def match_robust(
 
 
 def _match_robust_impl(
-    im1: str,
-    im2: str,
     p1: NDArray,
     p2: NDArray,
     matches: NDArray,
     camera1: pygeometry.Camera,
     camera2: pygeometry.Camera,
-    data: DataSetBase,
     overriden_config: Dict[str, Any],
 ) -> NDArray:
     """Perform robust geometry matching on a set of matched descriptors indexes."""
     # robust matching
-    rmatches = robust_match(p1, p2, camera1, camera2, matches, overriden_config)
+    rmatches = robust_match(p1, p2, camera1, camera2,
+                            matches, overriden_config)
     rmatches = np.array([[a, b] for a, b in rmatches])
     return rmatches
 
@@ -596,8 +694,9 @@ def match(
 
     # Run robust matching (non guided case only)
     t = timer()
+    matches_arr = np.array(matches, dtype=int).reshape(-1, 2)
     rmatches = _match_robust_impl(
-        im1, im2, p1, p2, matches, camera1, camera2, data, overriden_config
+        p1, p2, matches_arr, camera1, camera2, overriden_config
     )
     time_robust_matching = timer() - t
 
@@ -629,6 +728,42 @@ def match(
     if len(rmatches) < robust_matching_min_match:
         return np.array([])
     return np.array(rmatches, dtype=int)
+
+
+def match_opencl_bruteforce(f1: NDArray, f2: NDArray, config: Dict[str, Any]):
+    """
+    Match real-valued descriptors using brute force on OpenCL GPU.
+
+    Args:
+    f1: real-valued descriptors of the first image, shape (N1, K), dtype float32
+    f2: real-valued descriptors of the second image, shape (N2, K), dtype float32
+    N1 and N2 must be multiples of 4, and K must be a multiple of 4.
+    config: config parameters, must contain "lowes_ratio"
+    """
+    ratio = config["lowes_ratio"]
+    device_index = config["_opencl_device_idx"]
+    matches = pyfeatures.match_brute_force_opencl(
+        f1, f2, ratio, device_index
+    )
+    return [(int(m[0]), int(m[1])) for m in matches]
+
+
+def match_opencl_bruteforce_symmetric(f1: NDArray, f2: NDArray, config: Dict[str, Any]):
+    """
+    Match real-valued descriptors using symmetric brute force on OpenCL GPU.
+
+    Args:
+    f1: real-valued descriptors of the first image, shape (N1, K), dtype float32
+    f2: real-valued descriptors of the second image, shape (N2, K), dtype float32
+    N1 and N2 must be multiples of 4, and K must be a multiple of 4.
+    config: config parameters, must contain "lowes_ratio"
+    """
+    ratio = config["lowes_ratio"]
+    device_index = config["_opencl_device_idx"]
+    matches = pyfeatures.match_brute_force_opencl_symmetric(
+        f1, f2, ratio, device_index
+    )
+    return [(int(m[0]), int(m[1])) for m in matches]
 
 
 def match_words(
@@ -687,8 +822,10 @@ def match_flann(
         config: config parameters
     """
     search_params = dict(checks=config["flann_checks"])
-    results, dists = index.knnSearch(f2, 2, params=search_params)  # pyre-ignore[16]
-    squared_ratio = config["lowes_ratio"] ** 2  # Flann returns squared L2 distances
+    results, dists = index.knnSearch(
+        f2, 2, params=search_params)  # pyre-ignore[16]
+    # Flann returns squared L2 distances
+    squared_ratio = config["lowes_ratio"] ** 2
     good = dists[:, 0] < squared_ratio * dists[:, 1]
     return list(zip(results[good, 0], good.nonzero()[0]))
 
@@ -738,7 +875,8 @@ def match_brute_force(
     matcher = cv2.DescriptorMatcher_create(matcher_type)
     matcher.add([f2])
     if maskij is not None:
-        matches = matcher.knnMatch(f1, k=2, masks=np.array([maskij]).astype(np.uint8))
+        matches = matcher.knnMatch(
+            f1, k=2, masks=np.array([maskij]).astype(np.uint8))
     else:
         matches = matcher.knnMatch(f1, k=2)
 
@@ -768,7 +906,8 @@ def match_brute_force_symmetric(
     """
     matches_ij = [(a, b) for a, b in match_brute_force(fi, fj, config, maskij)]
     maskijT = maskij.T if maskij is not None else None
-    matches_ji = [(b, a) for a, b in match_brute_force(fj, fi, config, maskijT)]
+    matches_ji = [(b, a)
+                  for a, b in match_brute_force(fj, fi, config, maskijT)]
 
     return list(set(matches_ij).intersection(set(matches_ji)))
 
@@ -882,7 +1021,8 @@ def robust_match_calibrated(
     T = multiview.relative_pose_ransac(b1, b2, threshold, 1000, 0.999)
 
     for relax in [4, 2, 1]:
-        inliers = compute_inliers_bearings(b1, b2, T[:, :3], T[:, 3], relax * threshold)
+        inliers = compute_inliers_bearings(
+            b1, b2, T[:, :3], T[:, 3], relax * threshold)
         if np.sum(inliers) < 8:
             return np.array([])
         iterations = config["five_point_refine_match_iterations"]
@@ -1054,3 +1194,307 @@ def _blackvue_valid_mask(p: NDArray) -> bool:
     with h = 2160 and w = 3840
     """
     return p[1] < 0.263
+
+
+def generate_binary_cache(
+        data: DataSetBase,
+        pairs: List[Tuple[str, str]],
+        config: Dict[str, Any],
+        cameras: Dict[str, pygeometry.Camera],
+        exifs: Dict[str, Dict[str, Any]]):
+    """
+    Generate a cache of binarized descriptors for all images, using a projection trained on a random sample of matched pairs.
+
+     - Select a random subset of pairs for training.
+     - Match them with FLANN on CPU to get training matches.
+     - Collect positive and negative descriptor pairs from the matches.
+     - Train a linear projection to separate positives from negatives.
+     - Binarize descriptors for all images using the learned projection and store in cache.
+
+    Args:
+        data: Dataset to load descriptors from.
+        pairs: List of image pairs to sample from for training.
+        config: Matching config dict, may contain parameters for training and binarization.
+        cameras: Dict mapping image names to their camera models.
+        exifs: Dict mapping image names to their EXIF metadata.
+        poses: Dict mapping image names to their poses.
+    """
+    n_sample = min(config.get(
+        "binary_training_pairs", 100), len(pairs))
+    rng = np.random.RandomState(42)
+    sample_idx = rng.choice(len(pairs), n_sample, replace=False)
+    sample_pairs = [pairs[i] for i in sample_idx]
+
+    # Force FLANN matching on CPU for training pairs.
+    training_config = dict(config)
+    training_config["use_opencl_matching"] = False
+    training_config["matcher_type"] = "FLANN"
+    training_config["use_robust_matching"] = True
+
+    training_args = list(match_arguments(
+        sample_pairs, data, training_config, cameras, exifs, None, None))
+    processes = config.get("processes", 1)
+    processes = context.processes_that_fit_in_memory(processes, 512)
+    logger.info(
+        "Matching %d training pairs with FLANN (%d processes)",
+        len(sample_pairs), processes,
+    )
+    training_matches = context.parallel_map(
+        match_unwrap_args, training_args, processes, 2)
+
+    pos_d1, pos_d2, neg_d1, neg_d2 = collect_training_pairs(
+        data, training_matches, training_config,
+    )
+    P, t = train_dif_projection(
+        pos_d1, pos_d2, neg_d1, neg_d2)
+    config_override = dict(config)
+    config_override["_binary_P"] = P
+    config_override["_binary_t"] = t
+    logger.info("Binary projection trained: %d positive, %d negative pairs",
+                len(pos_d1), len(neg_d1))
+
+    # Binarize all image descriptors once upfront so per-pair
+    # matching doesn't repeat the (N, 128) @ (128, 128) matmul.
+    segmentation_in_desc = config.get(
+        "matching_use_segmentation", False)
+    binary_cache: Dict[str, NDArray] = {}
+    all_images = set()
+    for im1, im2 in pairs:
+        all_images.add(im1)
+        all_images.add(im2)
+    for im in all_images:
+        fd = feature_loader.instance.load_all_data(
+            data, im, masked=True,
+            segmentation_in_descriptor=segmentation_in_desc,
+        )
+        if fd is not None and fd.descriptors is not None:
+            d = fd.descriptors.astype(np.float32)
+            binary_cache[im] = binarize_descriptors(d, P, t)
+
+    return binary_cache
+
+
+def collect_training_pairs(
+    data: DataSetBase,
+    matched_results: List[Tuple[str, str, NDArray]],
+    config: Dict[str, Any],
+) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
+    """Collect positive and negative descriptor pairs from pre-matched image pairs.
+
+    Args:
+        data: Dataset to load descriptors from.
+        matched_results: List of (im1, im2, matches) from match_unwrap_args.
+        config: Matching config dict.
+
+    Returns:
+        (pos_d1, pos_d2, neg_d1, neg_d2): Arrays of shape (M, D) each.
+    """
+    rng = np.random.RandomState(42)
+    segmentation_in_desc = config["matching_use_segmentation"]
+
+    pos_d1_list: List[NDArray] = []
+    pos_d2_list: List[NDArray] = []
+    neg_d1_list: List[NDArray] = []
+    neg_d2_list: List[NDArray] = []
+
+    for im1, im2, match_arr in matched_results:
+        if len(match_arr) < 5:
+            continue
+
+        # Load descriptors for both images.
+        fd1 = feature_loader.instance.load_all_data(
+            data, im1, masked=True,
+            segmentation_in_descriptor=segmentation_in_desc,
+        )
+        fd2 = feature_loader.instance.load_all_data(
+            data, im2, masked=True,
+            segmentation_in_descriptor=segmentation_in_desc,
+        )
+        if fd1 is None or fd2 is None:
+            continue
+        d1 = fd1.descriptors
+        d2 = fd2.descriptors
+        if d1 is None or d2 is None or len(d1) < 10 or len(d2) < 10:
+            continue
+        d1 = d1.astype(np.float32)
+        d2 = d2.astype(np.float32)
+
+        match_arr = np.asarray(match_arr, dtype=int)
+        if match_arr.ndim != 2 or match_arr.shape[1] != 2:
+            continue
+
+        logger.info(
+            "Collected %d matches for training from pair (%s, %s)",
+            len(match_arr), im1, im2,
+        )
+
+        # Positive pairs
+        pos_d1_list.append(d1[match_arr[:, 0]])
+        pos_d2_list.append(d2[match_arr[:, 1]])
+
+        # Negative pairs: random pairings, excluding actual matches
+        n_neg = len(match_arr)
+        match_set = set(map(tuple, match_arr.tolist()))
+        neg_i = rng.randint(0, len(d1), n_neg * 2)
+        neg_j = rng.randint(0, len(d2), n_neg * 2)
+        count = 0
+        for qi, ri in zip(neg_i, neg_j):
+            if (qi, ri) not in match_set:
+                neg_d1_list.append(d1[qi: qi + 1])
+                neg_d2_list.append(d2[ri: ri + 1])
+                count += 1
+                if count >= n_neg:
+                    break
+
+    if not pos_d1_list:
+        raise RuntimeError(
+            "No positive pairs found for binary projection training"
+        )
+
+    return (
+        np.concatenate(pos_d1_list).astype(np.float32),
+        np.concatenate(pos_d2_list).astype(np.float32),
+        np.concatenate(neg_d1_list).astype(np.float32),
+        np.concatenate(neg_d2_list).astype(np.float32),
+    )
+
+
+def train_dif_projection(
+    pos_d1: NDArray,
+    pos_d2: NDArray,
+    neg_d1: NDArray,
+    neg_d2: NDArray,
+    n_bits: int = 128,
+    alpha: float = 10.0,
+) -> Tuple[NDArray, NDArray]:
+    """Train DIF binary projection from positive and negative descriptor pairs.
+
+    Args:
+        pos_d1, pos_d2: Matched descriptor pairs (M_pos, D).
+        neg_d1, neg_d2: Non-matched descriptor pairs (M_neg, D).
+        n_bits: Number of output bits (must be multiple of 32).
+        alpha: Weight balancing negative vs positive covariance.
+
+    Returns:
+        P: (n_bits, D) projection matrix (float32).
+        t: (n_bits,) threshold vector (float32).
+    """
+    desc_dim = pos_d1.shape[1]
+    logger.info(
+        "Training DIF projection: %d positive, %d negative pairs, "
+        "dim=%d, bits=%d, alpha=%.1f",
+        len(pos_d1), len(neg_d1), desc_dim, n_bits, alpha,
+    )
+
+    # DIF: covariance of DIFFERENCE vectors (d1 - d2), not raw descriptors.
+    # Σ_S = Cov(d1_pos - d2_pos): similar pairs should have small differences.
+    # Σ_D = Cov(d1_neg - d2_neg): dissimilar pairs should have large differences.
+    # We maximize w^T (Σ_D - α·Σ_S) w, i.e. find directions where dissimilar
+    # differences are spread out but similar differences are concentrated.
+    diff_pos = (pos_d1 - pos_d2).astype(np.float64)
+    diff_neg = (neg_d1 - neg_d2).astype(np.float64)
+
+    sigma_pos = np.cov(diff_pos.T)  # (D, D)
+    sigma_neg = np.cov(diff_neg.T)  # (D, D)
+
+    # DIF: eigendecompose (Sigma_neg - alpha * Sigma_pos), take top eigenvectors
+    m = sigma_neg - alpha * sigma_pos
+    eigenvalues, eigenvectors = np.linalg.eigh(m)
+
+    # eigh returns ascending order; take the n_bits largest
+    idx = np.argsort(eigenvalues)[::-1][:n_bits]
+    P = eigenvectors[:, idx].T.astype(np.float32)  # (n_bits, D)
+
+    # Optimize thresholds
+    t = optimize_dif_thresholds(P, pos_d1, pos_d2, neg_d1, neg_d2)
+
+    logger.info("DIF projection trained successfully")
+    return P, t
+
+
+def optimize_dif_thresholds(
+    P: NDArray,
+    pos_d1: NDArray,
+    pos_d2: NDArray,
+    neg_d1: NDArray,
+    neg_d2: NDArray,
+    n_bins: int = 500,
+) -> NDArray:
+    """Optimize per-dimension thresholds to maximize TP + TN.
+
+    For each projection dimension i, finds t_i that minimizes
+    FP(t_i) + FN(t_i) using histogram-based CDF estimation.
+    """
+    n_bits = P.shape[0]
+
+    # Project all pairs at once: (n_bits, N)
+    proj_p1 = (P @ pos_d1.T).astype(np.float64)  # (n_bits, N_pos)
+    proj_p2 = (P @ pos_d2.T).astype(np.float64)
+    proj_n1 = (P @ neg_d1.T).astype(np.float64)  # (n_bits, N_neg)
+    proj_n2 = (P @ neg_d2.T).astype(np.float64)
+
+    t = np.zeros(n_bits, dtype=np.float32)
+
+    for i in range(n_bits):
+        yp1, yp2 = proj_p1[i], proj_p2[i]
+        yn1, yn2 = proj_n1[i], proj_n2[i]
+
+        min_pos = np.minimum(yp1, yp2)
+        max_pos = np.maximum(yp1, yp2)
+        min_neg = np.minimum(yn1, yn2)
+        max_neg = np.maximum(yn1, yn2)
+
+        # Candidate thresholds spanning the data range
+        lo = min(min_pos.min(), min_neg.min())
+        hi = max(max_pos.max(), max_neg.max())
+        candidates = np.linspace(lo, hi, n_bins)  # (n_bins,)
+
+        # Vectorized: FN = P(bits differ for positive) = P(min <= t <= max)
+        fn = np.mean(
+            (min_pos[None, :] <= candidates[:, None])
+            & (candidates[:, None] <= max_pos[None, :]),
+            axis=1,
+        )
+        # FP = P(bits agree for negative) = P(t < min or t > max)
+        fp = np.mean(
+            (candidates[:, None] < min_neg[None, :])
+            | (candidates[:, None] > max_neg[None, :]),
+            axis=1,
+        )
+
+        score = (1.0 - fn) + (1.0 - fp)  # TP + TN
+        # The optimization finds the optimal boundary c in raw projection
+        # space P·x.  Binarization uses sign(P·x + t), whose boundary is
+        # at P·x = -t.  So the additive term must be t = -c.
+        t[i] = -candidates[np.argmax(score)]
+
+    return t
+
+
+def binarize_descriptors(
+    descriptors: NDArray, P: NDArray, t: NDArray
+) -> NDArray:
+    """Binarize float descriptors using learned projection.
+
+    Args:
+        descriptors: (N, D) float32 descriptors.
+        P: (n_bits, D) projection matrix.
+        t: (n_bits,) thresholds.
+
+    Returns:
+        (N, n_bits // 32) uint32 array of packed binary descriptors.
+    """
+    # Project: (N, D) @ (D, n_bits) -> (N, n_bits)
+    projected = descriptors @ P.T + t[None, :]
+    bits = projected > 0  # (N, n_bits) bool
+
+    # Pack into uint32 words
+    n_bits = P.shape[0]
+    n_words = n_bits // 32
+    bits_reshaped = bits.reshape(-1, n_words, 32)
+    powers = np.uint32(1) << np.arange(32, dtype=np.uint32)
+    packed = (bits_reshaped.astype(np.uint32) * powers).sum(axis=2).astype(
+        np.uint32
+    )
+
+    return np.ascontiguousarray(packed)
