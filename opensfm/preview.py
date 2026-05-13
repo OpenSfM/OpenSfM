@@ -528,6 +528,46 @@ def _periodic_bundle_and_align(
     )
 
 
+def _filter_by_gps_error(
+    reconstruction: types.Reconstruction,
+    mad_factor: float = 4.0,
+) -> int:
+    """Remove shots whose camera position deviates too far from GPS.
+
+    Computes per-shot 3D distance between reconstructed origin and GPS
+    position, then removes shots with error > mad_factor * (median + MAD).
+
+    Returns the number of removed shots.
+    """
+    errors: Dict[str, float] = {}
+    for shot_id, shot in reconstruction.shots.items():
+        if not shot.metadata.gps_position.has_value:
+            continue
+        gps = shot.metadata.gps_position.value
+        origin = shot.pose.get_origin()
+        errors[shot_id] = float(np.linalg.norm(origin - gps))
+
+    if len(errors) < 3:
+        return 0
+
+    err_arr = np.array(list(errors.values()))
+    median = float(np.median(err_arr))
+    mad = float(np.median(np.abs(err_arr - median)))
+    cutoff = mad_factor * (median + mad)
+
+    to_remove = [sid for sid, e in errors.items() if e > cutoff]
+    for sid in to_remove:
+        reconstruction.remove_shot(sid)
+
+    if to_remove:
+        logger.info(
+            "Preview: GPS filter removed %d shots "
+            "(median=%.2f, MAD=%.2f, cutoff=%.2f)",
+            len(to_remove), median, mad, cutoff,
+        )
+    return len(to_remove)
+
+
 def _remove_outlier_points(
     reconstruction: types.Reconstruction,
     features_cache: Dict[str, NDArray],
@@ -716,37 +756,20 @@ def _compute_image_order(
         neighbors[im1].add(im2)
         neighbors[im2].add(im1)
 
-    # BFS ordering from the most-connected image for spatial locality
-    start = max(images, key=lambda im: len(neighbors.get(im, set())))
-    visited_set: Set[str] = set()
-    ordered: List[str] = []
-    queue: List[str] = [start]
-    while queue:
-        im = queue.pop(0)
-        if im in visited_set:
-            continue
-        visited_set.add(im)
-        ordered.append(im)
-        # Enqueue neighbors sorted by descending connectivity
-        nbrs = sorted(
-            neighbors.get(im, set()) - visited_set,
-            key=lambda n: len(neighbors.get(n, set())),
-            reverse=True,
-        )
-        queue.extend(nbrs)
+    # Sort by capture time (natural trajectory order)
+    def _capture_time(im: str) -> float:
+        ct = exifs.get(im, {}).get("capture_time", 0.0)
+        return ct if ct is not None else 0.0
 
-    # Append any disconnected images at the end
-    for im in images:
-        if im not in visited_set:
-            ordered.append(im)
+    ordered = sorted(images, key=_capture_time)
 
     logger.info(
         "Preview: image ordering computed — %d images, %d putative pairs, "
-        "starting from %s (%d neighbors)",
+        "sorted by capture time (%s → %s)",
         len(ordered),
         len(pairs),
-        start,
-        len(neighbors.get(start, set())),
+        ordered[0] if ordered else "?",
+        ordered[-1] if ordered else "?",
     )
     return ordered, dict(neighbors)
 
@@ -769,7 +792,7 @@ def _feature_extraction_worker(
     """
     data = DataSet(data_path)
     data.config.update(config_override)
-    batch_size = max(1, config_override.get("processes", 1))
+    batch_size = 48
 
     i = 0
     while i < len(ordered_images):
@@ -834,8 +857,9 @@ def _matching_worker(
             n for n in neighbors if n in features_ready and n != image]
 
         # Cap to 10 random neighbors to keep matching fast
-        if len(ready_neighbors) > 10:
-            ready_neighbors = random.sample(ready_neighbors, 10)
+        max_images = 10
+        if len(ready_neighbors) > max_images:
+            ready_neighbors = random.sample(ready_neighbors, max_images)
 
         if ready_neighbors:
             try:
@@ -915,6 +939,14 @@ def _streaming_incremental_reconstruction(
                 candidate_graph._adj[image][other] = n
                 if image not in candidate_graph._adj[other]:
                     candidate_graph._adj[other][image] = n
+                # If the other image is already reconstructed, update THIS
+                # image's score.  mark_reconstructed(other) was called before
+                # we existed in the graph, so we missed the score update.
+                if other in reconstructed_images:
+                    candidate_graph._score[image] += n
+                    cur = candidate_graph._best_partner.get(image)
+                    if cur is None or n > cur[1]:
+                        candidate_graph._best_partner[image] = (other, n)
 
         if image in reconstructed_images:
             candidate_graph.mark_reconstructed(image)
@@ -1170,13 +1202,35 @@ def _streaming_incremental_reconstruction(
                     break
 
             if bootstrapped:
-                # Try to add all deferred images
-                for dim in deferred_images:
-                    if dim not in reconstructed_images:
-                        _try_add_image(dim)
+                # Try to add all deferred images in best-connected order
+                remaining = set(
+                    im for im in deferred_images
+                    if im not in reconstructed_images
+                )
+                while remaining:
+                    best = candidate_graph.pop_best_candidate(remaining)
+                    if best is None:
+                        break
+                    cand, _, _ = best
+                    remaining.discard(cand)
+                    _try_add_image(cand)
                 deferred_images.clear()
         else:
-            _try_add_image(image)
+            # Growth mode: try to add the best-connected candidates
+            # among all matched-but-not-reconstructed images.
+            remaining = set(match_cache.keys()) - reconstructed_images
+            max_consecutive_failures = 5
+            failures = 0
+            while remaining and failures < max_consecutive_failures:
+                best = candidate_graph.pop_best_candidate(remaining)
+                if best is None:
+                    break
+                cand, _, _ = best
+                remaining.discard(cand)
+                if _try_add_image(cand):
+                    failures = 0  # reset on success — keep going
+                else:
+                    failures += 1
 
     # --- Final pass: retry any remaining images ---
     all_remaining = set(all_images) - reconstructed_images
@@ -1202,6 +1256,10 @@ def _streaming_incremental_reconstruction(
             camera_priors, rig_camera_priors, config, threshold,
             data=data,
         )
+
+        # Remove shots with GPS error > 4 * (median + MAD)
+        _filter_by_gps_error(reconstruction)
+
         report["num_images"] = len(reconstruction.shots)
         report["num_points"] = len(reconstruction.points)
         saver.save_full_reconstruction(data, [reconstruction])
@@ -1269,8 +1327,8 @@ def run_preview_dataset(data: DataSet) -> Dict[str, Any]:
         n_cpus, per_stage,
     )
 
-    feat_queue: mp.Queue = mp.Queue(maxsize=50)
-    match_queue: mp.Queue = mp.Queue(maxsize=50)
+    feat_queue: mp.Queue = mp.Queue()  # unbounded: entries are just image names
+    match_queue: mp.Queue = mp.Queue()  # unbounded: entries are just image names
 
     feat_proc = mp.Process(
         target=_feature_extraction_worker,
