@@ -12,6 +12,169 @@ from opensfm import pygeometry, pymap, types
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def triangle_mesh_from_points(
+    shot: pymap.Shot,
+    point_coords: NDArray,
+) -> Tuple[List[List[float]], List[List[int]]]:
+    """Build a Delaunay mesh for a shot from an explicit array of 3D points.
+
+    This variant does **not** require a TracksManager and is intended for
+    the preview pipeline where tracks are constructed ad-hoc.
+
+    Args:
+        shot: The shot for which to build the mesh.
+        point_coords: (N, 3) array of world-space 3D point coordinates
+            visible in the shot.
+
+    Returns:
+        (vertices, faces) where *vertices* is a list of [x,y,z] and
+        *faces* is a list of [i,j,k] index triples.
+    """
+    cam = shot.camera
+
+    if cam.projection_type in [
+        "perspective",
+        "brown",
+        "radial",
+        "simple_radial",
+    ]:
+        return _triangle_mesh_from_points_perspective(shot, point_coords)
+    elif cam.projection_type in [
+        "fisheye",
+        "fisheye_opencv",
+        "fisheye62",
+        "fisheye624",
+        "dual",
+    ]:
+        return _triangle_mesh_from_points_fisheye(shot, point_coords)
+    elif pygeometry.Camera.is_panorama(cam.projection_type):
+        return _triangle_mesh_from_points_spherical(shot, point_coords)
+    else:
+        raise NotImplementedError(
+            f"triangle_mesh_from_points not implemented for "
+            f"projection type {cam.projection_type}"
+        )
+
+
+def _triangle_mesh_from_points_perspective(
+    shot: pymap.Shot,
+    point_coords: NDArray,
+) -> Tuple[List[List[float]], List[List[int]]]:
+    cam = shot.camera
+
+    dx = float(cam.width) / 2 / max(cam.width, cam.height)
+    dy = float(cam.height) / 2 / max(cam.width, cam.height)
+    corner_pixels = [[-dx, -dy], [-dx, dy], [dx, dy], [dx, -dy]]
+    pixels: List[List[float]] = list(corner_pixels)
+    vertices: List[List[float]] = [[0.0, 0.0, 0.0] for _ in range(4)]
+
+    for coord in point_coords:
+        pixel = shot.project(coord)
+        if np.isnan(pixel).any():
+            continue
+        if -dx <= pixel[0] <= dx and -dy <= pixel[1] <= dy:
+            vertices.append(coord.tolist())
+            pixels.append(pixel.tolist())
+
+    if len(pixels) < 4:
+        return [], []
+
+    try:
+        tri = scipy.spatial.Delaunay(pixels)
+    except Exception:
+        logger.warning(
+            "Delaunay triangulation failed for shot %s", shot.id
+        )
+        return [], []
+
+    sums = [0.0, 0.0, 0.0, 0.0]
+    depths = [0.0, 0.0, 0.0, 0.0]
+    for t in tri.simplices:
+        for i in range(4):
+            if i in t:
+                for j in t:
+                    if j >= 4:
+                        depths[i] += shot.pose.transform(vertices[j])[2]
+                        sums[i] += 1
+
+    for i in range(4):
+        d = depths[i] / sums[i] if sums[i] > 0 else 50.0
+        vertices[i] = back_project_no_distortion(
+            shot, corner_pixels[i], d
+        ).tolist()
+
+    faces = tri.simplices.tolist()
+    return vertices, faces
+
+
+def _triangle_mesh_from_points_fisheye(
+    shot: pymap.Shot,
+    point_coords: NDArray,
+) -> Tuple[List[List[float]], List[List[int]]]:
+    bearings = []
+    vertices: List[List[float]] = []
+
+    num_circle_points: int = 20
+    for i in range(num_circle_points):
+        a = 2 * np.pi * float(i) / num_circle_points
+        point = 30 * np.array([np.cos(a), np.sin(a), 0])
+        bearing = point / np.linalg.norm(point)
+        point = shot.pose.transform_inverse(point)
+        vertices.append(point.tolist())
+        bearings.append(bearing)
+
+    point = 30 * np.array([0, 0, 1])
+    bearing = 0.3 * point / np.linalg.norm(point)
+    point = shot.pose.transform_inverse(point)
+    vertices.append(point.tolist())
+    bearings.append(bearing)
+
+    for coord in point_coords:
+        direction = shot.pose.transform(coord)
+        pixel = direction / np.linalg.norm(direction)
+        if not np.isnan(pixel).any():
+            vertices.append(coord.tolist())
+            bearings.append(pixel.tolist())
+
+    tri = scipy.spatial.ConvexHull(bearings)
+    faces = tri.simplices.tolist()
+
+    def good_face(face: List[int]) -> bool:
+        return (
+            face[0] >= num_circle_points
+            or face[1] >= num_circle_points
+            or face[2] >= num_circle_points
+        )
+
+    faces = list(filter(good_face, faces))
+    return vertices, faces
+
+
+def _triangle_mesh_from_points_spherical(
+    shot: pymap.Shot,
+    point_coords: NDArray,
+) -> Tuple[List[List[float]], List[List[int]]]:
+    bearings = []
+    vertices: List[List[float]] = []
+
+    for pt in itertools.product([-1, 1], repeat=3):
+        bearing = 0.3 * np.array(pt) / np.linalg.norm(pt)
+        bearings.append(bearing)
+        world_pt = shot.pose.transform_inverse(bearing)
+        vertices.append(world_pt.tolist())
+
+    for coord in point_coords:
+        direction = shot.pose.transform(coord)
+        pixel = direction / np.linalg.norm(direction)
+        if not np.isnan(pixel).any():
+            vertices.append(coord.tolist())
+            bearings.append(pixel.tolist())
+
+    tri = scipy.spatial.ConvexHull(bearings)
+    faces = tri.simplices.tolist()
+    return vertices, faces
+
+
 def triangle_mesh(
     shot_id: str, r: types.Reconstruction, tracks_manager: pymap.TracksManager
 ) -> Tuple[List[List[float]], List[List[int]]]:
@@ -68,7 +231,8 @@ def triangle_mesh_perspective(
     try:
         tri = scipy.spatial.Delaunay(pixels)
     except Exception as e:
-        logger.error("Delaunay triangulation failed for input: {}".format(repr(pixels)))
+        logger.error(
+            "Delaunay triangulation failed for input: {}".format(repr(pixels)))
         raise e
 
     sums = [0.0, 0.0, 0.0, 0.0]
