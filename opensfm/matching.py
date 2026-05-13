@@ -75,7 +75,7 @@ def match_pairs_with_binary_projection_batched(
     Args:
     data: dataset to load features from
     pairs: list of image pairs to match
-    config: config parameters, must contain "lowes_ratio" and binary matching parameters
+    config: config parameters, must contain "lowes_ratio_hamming" and binary matching parameters
     cameras: camera models for the images
     exifs: exif data for the images
     """
@@ -97,7 +97,7 @@ def match_pairs_with_binary_projection_batched(
         len(pairs), total_features)
     time_start = time.time()
     batch_results = pyfeatures.match_hamming_opencl_batch_symmetric(
-        bin1_list, bin2_list, config["lowes_ratio"], 0)
+        bin1_list, bin2_list, config["lowes_ratio_hamming"], 0)
     logger.info(
         "Batched Hamming matching completed in %.2f seconds", time.time() - time_start
     )
