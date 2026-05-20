@@ -261,6 +261,40 @@ class Report:
 
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + CELL_HEIGHT)
 
+    def _make_graded_row_lower(
+        self, label: str, value: float, text: str,
+        thresholds: Tuple[float, float, float], columns_sizes: List[int]
+    ) -> None:
+        """Render a table row with a colored quality dot (lower is better)."""
+        color = _quality_color_lower_is_better(value, thresholds)
+
+        # Label cell
+        self.pdf.set_fill_color(*COLOR_TABLE_LABEL)
+        self.pdf.set_text_color(*COLOR_PANEL)
+        self.pdf.set_font("Helvetica", "B", FONT_BODY)
+        self.pdf.set_draw_color(*COLOR_TABLE_BORDER)
+        self.pdf.set_line_width(0.15)
+        self.pdf.rect(self.pdf.get_x(), self.pdf.get_y(), columns_sizes[0], CELL_HEIGHT, style="FD")
+        self.pdf.cell(columns_sizes[0], CELL_HEIGHT, "  " + label, align="L")
+
+        # Value cell with colored indicator
+        self.pdf.set_fill_color(*COLOR_TABLE_ROW_EVEN)
+        self.pdf.set_draw_color(*COLOR_TABLE_BORDER)
+        self.pdf.rect(self.pdf.get_x(), self.pdf.get_y(), columns_sizes[1], CELL_HEIGHT, style="FD")
+
+        # Draw the dot in grade color
+        dot_x = self.pdf.get_x() + 4
+        dot_y = self.pdf.get_y() + CELL_HEIGHT / 2
+        self.pdf.set_fill_color(*color)
+        self.pdf.ellipse(dot_x - 1.4, dot_y - 1.4, 2.8, 2.8, style="F")
+
+        # Draw the text
+        self.pdf.set_text_color(*COLOR_TEXT)
+        self.pdf.set_font("Helvetica", "", FONT_BODY)
+        self.pdf.cell(columns_sizes[1], CELL_HEIGHT, "       " + text, align="L")
+
+        self.pdf.set_xy(MARGIN, self.pdf.get_y() + CELL_HEIGHT)
+
     def _draw_graded_cell(
         self, text: str, size: int, value: float,
         thresholds: Tuple[float, float, float], row_bg: Tuple[int, int, int]
@@ -434,7 +468,28 @@ class Report:
                 calibration_thresholds, col_sizes,
             )
 
+        # Overlap graded rows (thresholds: bad < 50%, avg 50-70%, good >= 70%)
+        overlap = self.stats.get("overlap", {})
+        overlap_thresholds = (50.0, 60.0, 70.0)
+        front_mean = overlap.get("front_overlap_mean", 0.0)
+        side_mean = overlap.get("side_overlap_mean", 0.0)
+        if front_mean > 0 or side_mean > 0:
+            self._make_graded_row(
+                "Front Overlap",
+                front_mean,
+                f"{front_mean:.1f}%",
+                overlap_thresholds, col_sizes,
+            )
+            self._make_graded_row(
+                "Side Overlap",
+                side_mean,
+                f"{side_mean:.1f}%",
+                overlap_thresholds, col_sizes,
+            )
+
         # Non-graded rows
+        self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
+
         gsd = self.stats["reconstruction_statistics"].get("gsd", -1.0)
         rows = [
             [
@@ -448,21 +503,42 @@ class Report:
             ["Geographic Referencing", " + ".join(geo_string) if geo_string else "None"],
         ]
 
-        if geo_string:
-            geo_errors = []
-            if self.stats["reconstruction_statistics"]["has_gps"]:
-                geo_errors.append(
-                    f"GPS: {self.stats['gps_errors']['average_error']:.2f}m")
-            if self._has_meaningful_gcp():
-                geo_errors.append(
-                    f"GCP: {self.stats['gcp_errors']['average_error']:.2f}m")
-            rows.append(["Georeferencing Errors", "  |  ".join(geo_errors)])
-
         gcp_crs = self.stats.get("gcp_errors", {}).get("coordinate_system")
         if gcp_crs:
             rows.append(["GCP Coordinate System", gcp_crs])
 
         self._make_table(None, rows, True)
+        self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
+
+
+        # GPS error graded row (based on multiples of input std dev)
+        if self.stats["reconstruction_statistics"]["has_gps"] and "average_error" in self.stats.get("gps_errors", {}):
+            gps_avg_error = self.stats["gps_errors"]["average_error"]
+            avg_gps_std = self.stats["gps_errors"].get("average_gps_std")
+            if avg_gps_std:
+                # Use the average of XYZ std as reference
+                ref_std = (avg_gps_std["x"] + avg_gps_std["y"] + avg_gps_std["z"]) / 3.0
+                if ref_std > 1e-9:
+                    # Thresholds: good <= 2*std, avg <= 3*std, bad > 4*std (lower is better)
+                    gps_thresholds = (2.0 * ref_std, 3.0 * ref_std, 4.0 * ref_std)
+                    self._make_graded_row_lower(
+                        "GPS Error",
+                        gps_avg_error,
+                        f"{gps_avg_error:.2f} meters",
+                        gps_thresholds, col_sizes,
+                    )
+
+        # GCP error graded row (based on GSD, same Z thresholds: good <= 3*GSD, avg <= 4*GSD, bad > 5*GSD)
+        if self._has_meaningful_gcp() and gsd > 0:
+            gcp_avg_error = self.stats["gcp_errors"]["average_error"]
+            gcp_thresholds = (3.0 * gsd, 4.0 * gsd, 5.0 * gsd)
+            self._make_graded_row_lower(
+                "GCP Error",
+                gcp_avg_error,
+                f"{gcp_avg_error:.3f} meters",
+                gcp_thresholds, col_sizes,
+            )
+
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
 
         # Top-view image
