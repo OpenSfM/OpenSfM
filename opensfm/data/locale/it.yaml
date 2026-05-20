@@ -1,0 +1,112 @@
+# OpenSfM Quality Report — Italiano
+
+# Section headers
+dataset_summary: "Riepilogo del dataset"
+processing_summary: "Riepilogo dell'elaborazione"
+features_details: "Dettagli dei punti di interesse"
+reconstruction_details: "Dettagli della ricostruzione"
+tracks_details: "Dettagli delle tracce"
+camera_models_details: "Dettagli dei modelli di camera"
+rig_cameras_details: "Dettagli delle camere del rig"
+overlap_summary: "Riepilogo della sovrapposizione"
+gps_gcp_errors_details: "Dettagli errori GPS/GCP"
+gcp_details: "Dettagli GCP"
+orientation_details: "Dettagli errori di orientamento"
+processing_time_details: "Dettagli tempi di elaborazione"
+
+# Title
+quality_report: "Rapporto di Qualità"
+
+# Dataset summary row labels
+dataset: "Dataset"
+date: "Data"
+area_covered: "Area coperta"
+processing_time: "Tempo di elaborazione"
+
+# Processing summary row labels
+reconstructed_images: "Immagini ricostruite"
+reconstructed_points: "Punti ricostruiti"
+average_track_length: "Lunghezza media delle tracce"
+camera_calibration_deviation: "Deviazione calibrazione camera"
+front_overlap: "Sovrapposizione frontale"
+side_overlap: "Sovrapposizione laterale"
+ground_sampling_distance: "Risoluzione a terra"
+reconstructed_components: "Componenti ricostruite"
+geographic_referencing: "Georeferenziazione"
+gcp_coordinate_system: "Sistema di coordinate GCP"
+gps_error: "Errore GPS"
+gcp_error: "Errore GCP"
+
+# Reconstruction details
+reprojection_error: "Errore di riproiezione (norm / px / angolare)"
+average_track_length_gt2: "Lunghezza media delle tracce (> 2)"
+
+# Overlap
+front_overlap_mean: "Sovrapposizione frontale (media)"
+side_overlap_mean: "Sovrapposizione laterale (media)"
+
+# GPS/GCP errors table
+mean: "Media"
+sigma: "Sigma"
+rms_error: "Errore RMS"
+x_error_distance: "Errore X ({unit})"
+y_error_distance: "Errore Y ({unit})"
+z_error_distance: "Errore Z ({unit})"
+total: "Totale"
+input_std_dev_distance: "Dev. std. input ({unit})"
+gps_bias: "Bias GPS"
+scale: "Scala"
+translation: "Traslazione"
+rotation: "Rotazione"
+
+# GCP details table
+gcp_id: "ID GCP"
+x_error_short: "Errore X ({unit})"
+y_error_short: "Errore Y ({unit})"
+z_error_short: "Errore Z ({unit})"
+inliers_total: "Inliers / Totale"
+
+# Orientation errors
+component: "Componente"
+omega_error: "Errore Omega (gradi)"
+phi_error: "Errore Phi (gradi)"
+kappa_error: "Errore Kappa (gradi)"
+
+# Features table
+detected: "Rilevati"
+reconstructed: "Ricostruiti"
+min: "Min."
+max: "Max."
+
+# Camera models table
+initial: "Iniziale"
+optimized: "Ottimizzato"
+rel_diff_pct: "Diff. rel. (%)"
+
+# Rig cameras columns
+translation_x: "Traslazione X"
+translation_y: "Traslazione Y"
+translation_z: "Traslazione Z"
+rotation_x: "Rotazione X"
+rotation_y: "Rotazione Y"
+rotation_z: "Rotazione Z"
+
+# Tracks table
+length: "Lunghezza"
+count: "Conteggio"
+
+# Units
+unit_meters: "metri"
+unit_feet: "piedi"
+unit_seconds: "secondi"
+unit_seconds_short: "sec."
+unit_images: "immagini"
+
+# Misc
+shots: "scatti"
+none: "Nessuno"
+gps: "GPS"
+gcp: "GCP"
+avg_focal_change: "variazione focale media"
+similarity: "similarità"
+median: "Mediana"

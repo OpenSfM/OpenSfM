@@ -529,6 +529,14 @@ class OpenSfMConfig:
     # Template to generate the relative path to a submodel images directory
     submodel_images_relpath_template: str = "submodels/submodel_%04d/images"
 
+    ##################################
+    # Params for report localization
+    ##################################
+    # Unit system for the quality report: "metric" or "imperial"
+    report_unit_system: str = "metric"
+    # Language for the quality report: "en", "fr", "es", "de", "it"
+    report_language: str = "en"
+
 
 def default_config() -> Dict[str, Any]:
     """Return default configuration"""

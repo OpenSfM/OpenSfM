@@ -1,0 +1,112 @@
+# OpenSfM Quality Report — English (canonical reference)
+
+# Section headers
+dataset_summary: "Dataset Summary"
+processing_summary: "Processing Summary"
+features_details: "Features Details"
+reconstruction_details: "Reconstruction Details"
+tracks_details: "Tracks Details"
+camera_models_details: "Camera Models Details"
+rig_cameras_details: "Rig Cameras Details"
+overlap_summary: "Overlap Summary"
+gps_gcp_errors_details: "GPS/GCP Errors Details"
+gcp_details: "GCP Details"
+orientation_details: "Orientation Error Details"
+processing_time_details: "Processing Time Details"
+
+# Title
+quality_report: "Quality Report"
+
+# Dataset summary row labels
+dataset: "Dataset"
+date: "Date"
+area_covered: "Area Covered"
+processing_time: "Processing Time"
+
+# Processing summary row labels
+reconstructed_images: "Reconstructed Images"
+reconstructed_points: "Reconstructed Points"
+average_track_length: "Average Track Length"
+camera_calibration_deviation: "Camera Calibration Deviation"
+front_overlap: "Front Overlap"
+side_overlap: "Side Overlap"
+ground_sampling_distance: "Ground Sampling Distance"
+reconstructed_components: "Reconstructed Components"
+geographic_referencing: "Geographic Referencing"
+gcp_coordinate_system: "GCP Coordinate System"
+gps_error: "GPS Error"
+gcp_error: "GCP Error"
+
+# Reconstruction details
+reprojection_error: "Reprojection Error (norm / px / angular)"
+average_track_length_gt2: "Average Track Length (> 2)"
+
+# Overlap
+front_overlap_mean: "Front Overlap (mean)"
+side_overlap_mean: "Side Overlap (mean)"
+
+# GPS/GCP errors table
+mean: "Mean"
+sigma: "Sigma"
+rms_error: "RMS Error"
+x_error_distance: "X Error ({unit})"
+y_error_distance: "Y Error ({unit})"
+z_error_distance: "Z Error ({unit})"
+total: "Total"
+input_std_dev_distance: "Input Std Dev ({unit})"
+gps_bias: "GPS Bias"
+scale: "Scale"
+translation: "Translation"
+rotation: "Rotation"
+
+# GCP details table
+gcp_id: "GCP ID"
+x_error_short: "X Error ({unit})"
+y_error_short: "Y Error ({unit})"
+z_error_short: "Z Error ({unit})"
+inliers_total: "Inliers / Total"
+
+# Orientation errors
+component: "Component"
+omega_error: "Omega Error (degrees)"
+phi_error: "Phi Error (degrees)"
+kappa_error: "Kappa Error (degrees)"
+
+# Features table
+detected: "Detected"
+reconstructed: "Reconstructed"
+min: "Min."
+max: "Max."
+
+# Camera models table
+initial: "Initial"
+optimized: "Optimized"
+rel_diff_pct: "Rel. Diff (%)"
+
+# Rig cameras columns
+translation_x: "Translation X"
+translation_y: "Translation Y"
+translation_z: "Translation Z"
+rotation_x: "Rotation X"
+rotation_y: "Rotation Y"
+rotation_z: "Rotation Z"
+
+# Tracks table
+length: "Length"
+count: "Count"
+
+# Units
+unit_meters: "meters"
+unit_feet: "feet"
+unit_seconds: "seconds"
+unit_seconds_short: "sec."
+unit_images: "images"
+
+# Misc
+shots: "shots"
+none: "None"
+gps: "GPS"
+gcp: "GCP"
+avg_focal_change: "avg. focal change"
+similarity: "similarity"
+median: "Median"

@@ -1,0 +1,112 @@
+# OpenSfM Quality Report — Deutsch
+
+# Section headers
+dataset_summary: "Datensatzübersicht"
+processing_summary: "Verarbeitungsübersicht"
+features_details: "Merkmale Details"
+reconstruction_details: "Rekonstruktionsdetails"
+tracks_details: "Spurdetails"
+camera_models_details: "Kameramodell-Details"
+rig_cameras_details: "Rig-Kamera-Details"
+overlap_summary: "Überlappungsübersicht"
+gps_gcp_errors_details: "GPS/GCP-Fehlerdetails"
+gcp_details: "GCP-Details"
+orientation_details: "Orientierungsfehler-Details"
+processing_time_details: "Verarbeitungszeit-Details"
+
+# Title
+quality_report: "Qualitätsbericht"
+
+# Dataset summary row labels
+dataset: "Datensatz"
+date: "Datum"
+area_covered: "Abgedeckte Fläche"
+processing_time: "Verarbeitungszeit"
+
+# Processing summary row labels
+reconstructed_images: "Rekonstruierte Bilder"
+reconstructed_points: "Rekonstruierte Punkte"
+average_track_length: "Durchschnittliche Spurlänge"
+camera_calibration_deviation: "Kamerakalibrierungsabweichung"
+front_overlap: "Frontale Überlappung"
+side_overlap: "Seitliche Überlappung"
+ground_sampling_distance: "Bodenauflösung"
+reconstructed_components: "Rekonstruierte Komponenten"
+geographic_referencing: "Georeferenzierung"
+gcp_coordinate_system: "GCP-Koordinatensystem"
+gps_error: "GPS-Fehler"
+gcp_error: "GCP-Fehler"
+
+# Reconstruction details
+reprojection_error: "Reprojektionsfehler (norm / px / Winkel)"
+average_track_length_gt2: "Durchschnittliche Spurlänge (> 2)"
+
+# Overlap
+front_overlap_mean: "Frontale Überlappung (Mittel)"
+side_overlap_mean: "Seitliche Überlappung (Mittel)"
+
+# GPS/GCP errors table
+mean: "Mittel"
+sigma: "Sigma"
+rms_error: "RMS-Fehler"
+x_error_distance: "X-Fehler ({unit})"
+y_error_distance: "Y-Fehler ({unit})"
+z_error_distance: "Z-Fehler ({unit})"
+total: "Gesamt"
+input_std_dev_distance: "Eingabe-Std.abw. ({unit})"
+gps_bias: "GPS-Bias"
+scale: "Skalierung"
+translation: "Translation"
+rotation: "Rotation"
+
+# GCP details table
+gcp_id: "GCP-ID"
+x_error_short: "X-Fehler ({unit})"
+y_error_short: "Y-Fehler ({unit})"
+z_error_short: "Z-Fehler ({unit})"
+inliers_total: "Inliers / Gesamt"
+
+# Orientation errors
+component: "Komponente"
+omega_error: "Omega-Fehler (Grad)"
+phi_error: "Phi-Fehler (Grad)"
+kappa_error: "Kappa-Fehler (Grad)"
+
+# Features table
+detected: "Erkannt"
+reconstructed: "Rekonstruiert"
+min: "Min."
+max: "Max."
+
+# Camera models table
+initial: "Anfangswert"
+optimized: "Optimiert"
+rel_diff_pct: "Rel. Diff. (%)"
+
+# Rig cameras columns
+translation_x: "Translation X"
+translation_y: "Translation Y"
+translation_z: "Translation Z"
+rotation_x: "Rotation X"
+rotation_y: "Rotation Y"
+rotation_z: "Rotation Z"
+
+# Tracks table
+length: "Länge"
+count: "Anzahl"
+
+# Units
+unit_meters: "Meter"
+unit_feet: "Fuß"
+unit_seconds: "Sekunden"
+unit_seconds_short: "Sek."
+unit_images: "Bilder"
+
+# Misc
+shots: "Aufnahmen"
+none: "Keine"
+gps: "GPS"
+gcp: "GCP"
+avg_focal_change: "mittl. Brennweitenänderung"
+similarity: "Ähnlichkeit"
+median: "Median"

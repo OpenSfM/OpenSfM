@@ -10,6 +10,7 @@ import numpy as np
 from fpdf import FPDF
 from opensfm import io
 from opensfm.dataset import DataSet
+from opensfm.report_locale import ReportLocale
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -107,6 +108,11 @@ class Report:
         self.dataset_name: str = os.path.basename(data.data_path)
         self.io_handler: io.IoFilesystemBase = data.io_handler
         self.data_path: str = data.data_path
+
+        self.locale: ReportLocale = ReportLocale(
+            language=data.config.get("report_language", "en"),
+            unit_system=data.config.get("report_unit_system", "metric"),
+        )
 
         self.pdf = FPDF("P", "mm", "A4")
         self.pdf.set_auto_page_break(auto=True, margin=MARGIN)
@@ -352,7 +358,7 @@ class Report:
         self.pdf.set_xy(title_x, MARGIN + 9)
         self.pdf.set_font("Helvetica", "", FONT_H1)
         self.pdf.set_text_color(*COLOR_PANEL)
-        self.pdf.cell(0, 8, "Quality Report", align="L")
+        self.pdf.cell(0, 8, self.locale.t("quality_report"), align="L")
 
         # Version number (right aligned)
         try:
@@ -378,18 +384,18 @@ class Report:
         self.pdf.set_xy(MARGIN, MARGIN + 22)
 
     def make_dataset_summary(self) -> None:
-        self._make_section("Dataset Summary")
+        self._make_section(self.locale.t("dataset_summary"))
 
         rows = [
-            ["Dataset", self.dataset_name],
-            ["Date", self.stats["processing_statistics"]["date"]],
+            [self.locale.t("dataset"), self.dataset_name],
+            [self.locale.t("date"), self.stats["processing_statistics"]["date"]],
             [
-                "Area Covered",
-                f"{self.stats['processing_statistics']['area'] / 1e6:.6f} km\u00b2",
+                self.locale.t("area_covered"),
+                self.locale.format_area(self.stats["processing_statistics"]["area"]),
             ],
             [
-                "Processing Time",
-                f"{self.stats['processing_statistics']['steps_times']['Total Time']:.2f} seconds",
+                self.locale.t("processing_time"),
+                self.locale.format_time(self.stats["processing_statistics"]["steps_times"]["Total Time"]),
             ],
         ]
         self._make_table(None, rows, True)
@@ -402,7 +408,7 @@ class Report:
         )
 
     def make_processing_summary(self) -> None:
-        self._make_section("Processing Summary")
+        self._make_section(self.locale.t("processing_summary"))
 
         rec_shots, init_shots = (
             self.stats["reconstruction_statistics"]["reconstructed_shots_count"],
@@ -415,9 +421,9 @@ class Report:
 
         geo_string = []
         if self.stats["reconstruction_statistics"]["has_gps"]:
-            geo_string.append("GPS")
+            geo_string.append(self.locale.t("gps"))
         if self._has_meaningful_gcp():
-            geo_string.append("GCP")
+            geo_string.append(self.locale.t("gcp"))
 
         ratio_shots = rec_shots / init_shots * 100 if init_shots > 0 else -1
         ratio_points = rec_points / init_points * 100 if init_points > 0 else -1
@@ -433,21 +439,21 @@ class Report:
 
         # Graded rows
         self._make_graded_row(
-            "Reconstructed Images",
+            self.locale.t("reconstructed_images"),
             ratio_shots,
-            f"{rec_shots} / {init_shots} shots ({ratio_shots:.1f}%)",
+            f"{rec_shots} / {init_shots} {self.locale.t('shots')} ({ratio_shots:.1f}%)",
             shots_thresholds, col_sizes,
         )
         self._make_graded_row(
-            "Reconstructed Points",
+            self.locale.t("reconstructed_points"),
             ratio_points,
             f"{rec_points} / {init_points} ({ratio_points:.1f}%)",
             points_thresholds, col_sizes,
         )
         self._make_graded_row(
-            "Average Track Length",
+            self.locale.t("average_track_length"),
             avg_track,
-            f"{avg_track:.2f} images",
+            f"{avg_track:.2f} {self.locale.t('unit_images')}",
             track_thresholds, col_sizes,
         )
 
@@ -462,9 +468,9 @@ class Report:
             avg_focal_diff = float(np.mean(focal_diffs))
             calibration_similarity = max(0.0, 100.0 - avg_focal_diff)
             self._make_graded_row(
-                "Camera Calibration Deviation",
+                self.locale.t("camera_calibration_deviation"),
                 calibration_similarity,
-                f"{avg_focal_diff:.2f}% avg. focal change ({calibration_similarity:.1f}% similarity)",
+                f"{avg_focal_diff:.2f}% {self.locale.t('avg_focal_change')} ({calibration_similarity:.1f}% {self.locale.t('similarity')})",
                 calibration_thresholds, col_sizes,
             )
 
@@ -475,13 +481,13 @@ class Report:
         side_mean = overlap.get("side_overlap_mean", 0.0)
         if front_mean > 0 or side_mean > 0:
             self._make_graded_row(
-                "Front Overlap",
+                self.locale.t("front_overlap"),
                 front_mean,
                 f"{front_mean:.1f}%",
                 overlap_thresholds, col_sizes,
             )
             self._make_graded_row(
-                "Side Overlap",
+                self.locale.t("side_overlap"),
                 side_mean,
                 f"{side_mean:.1f}%",
                 overlap_thresholds, col_sizes,
@@ -493,19 +499,19 @@ class Report:
         gsd = self.stats["reconstruction_statistics"].get("gsd", -1.0)
         rows = [
             [
-                "Ground Sampling Distance",
-                f"{gsd * 100:.2f} cm/px" if gsd > 0 else "N/A",
+                self.locale.t("ground_sampling_distance"),
+                self.locale.format_gsd(gsd) if gsd > 0 else "N/A",
             ],
             [
-                "Reconstructed Components",
+                self.locale.t("reconstructed_components"),
                 f"{self.stats['reconstruction_statistics']['components']}",
             ],
-            ["Geographic Referencing", " + ".join(geo_string) if geo_string else "None"],
+            [self.locale.t("geographic_referencing"), " + ".join(geo_string) if geo_string else self.locale.t("none")],
         ]
 
         gcp_crs = self.stats.get("gcp_errors", {}).get("coordinate_system")
         if gcp_crs:
-            rows.append(["GCP Coordinate System", gcp_crs])
+            rows.append([self.locale.t("gcp_coordinate_system"), gcp_crs])
 
         self._make_table(None, rows, True)
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
@@ -522,9 +528,9 @@ class Report:
                     # Thresholds: good <= 2*std, avg <= 3*std, bad > 4*std (lower is better)
                     gps_thresholds = (2.0 * ref_std, 3.0 * ref_std, 4.0 * ref_std)
                     self._make_graded_row_lower(
-                        "GPS Error",
+                        self.locale.t("gps_error"),
                         gps_avg_error,
-                        f"{gps_avg_error:.2f} meters",
+                        self.locale.format_distance_label(gps_avg_error),
                         gps_thresholds, col_sizes,
                     )
 
@@ -533,9 +539,9 @@ class Report:
             gcp_avg_error = self.stats["gcp_errors"]["average_error"]
             gcp_thresholds = (3.0 * gsd, 4.0 * gsd, 5.0 * gsd)
             self._make_graded_row_lower(
-                "GCP Error",
+                self.locale.t("gcp_error"),
                 gcp_avg_error,
-                f"{gcp_avg_error:.3f} meters",
+                self.locale.format_distance_label(gcp_avg_error, precision=3),
                 gcp_thresholds, col_sizes,
             )
 
@@ -554,41 +560,43 @@ class Report:
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
 
     def make_processing_time_details(self) -> None:
-        self._make_section("Processing Time Details")
+        self._make_section(self.locale.t("processing_time_details"))
 
         columns_names = list(
             self.stats["processing_statistics"]["steps_times"].keys())
         formatted_floats = []
         for v in self.stats["processing_statistics"]["steps_times"].values():
-            formatted_floats.append(f"{v:.2f} sec.")
+            formatted_floats.append(self.locale.format_time(v))
         rows = [formatted_floats]
         self._make_table(columns_names, rows)
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + SECTION_GAP)
 
     def make_gps_details(self) -> None:
-        self._make_section("GPS/GCP Errors Details")
+        self._make_section(self.locale.t("gps_gcp_errors_details"))
+
+        dist_unit = self.locale.distance_unit_label()
 
         for error_type in ["gps", "gcp"]:
             rows = []
-            columns_names = [error_type.upper(), "Mean", "Sigma", "RMS Error"]
+            columns_names = [error_type.upper(), self.locale.t("mean"), self.locale.t("sigma"), self.locale.t("rms_error")]
             if "average_error" not in self.stats[error_type + "_errors"]:
                 continue
             for comp in ["x", "y", "z"]:
-                row = [comp.upper() + " Error (meters)"]
+                row = [self.locale.t(f"{comp}_error_distance").format(unit=dist_unit)]
                 row.append(
-                    f"{self.stats[error_type + '_errors']['mean'][comp]:.3f}")
+                    self.locale.format_distance(self.stats[error_type + '_errors']['mean'][comp], precision=3))
                 row.append(
-                    f"{self.stats[error_type + '_errors']['std'][comp]:.3f}")
+                    self.locale.format_distance(self.stats[error_type + '_errors']['std'][comp], precision=3))
                 row.append(
-                    f"{self.stats[error_type + '_errors']['error'][comp]:.3f}")
+                    self.locale.format_distance(self.stats[error_type + '_errors']['error'][comp], precision=3))
                 rows.append(row)
 
             rows.append(
                 [
-                    "Total",
+                    self.locale.t("total"),
                     "",
                     "",
-                    f"{self.stats[error_type + '_errors']['average_error']:.3f}",
+                    self.locale.format_distance(self.stats[error_type + '_errors']['average_error'], precision=3),
                 ]
             )
 
@@ -598,10 +606,10 @@ class Report:
                 if avg_gps_std:
                     rows.append(
                         [
-                            "Input Std Dev (meters)",
-                            f"{avg_gps_std['x']:.3f}",
-                            f"{avg_gps_std['y']:.3f}",
-                            f"{avg_gps_std['z']:.3f}",
+                            self.locale.t("input_std_dev_distance").format(unit=dist_unit),
+                            self.locale.format_distance(avg_gps_std['x'], precision=3),
+                            self.locale.format_distance(avg_gps_std['y'], precision=3),
+                            self.locale.format_distance(avg_gps_std['z'], precision=3),
                         ]
                     )
 
@@ -610,10 +618,10 @@ class Report:
 
         rows = []
         columns_names = [
-            "GPS Bias",
-            "Scale",
-            "Translation",
-            "Rotation",
+            self.locale.t("gps_bias"),
+            self.locale.t("scale"),
+            self.locale.t("translation"),
+            self.locale.t("rotation"),
         ]
         for camera, params in self.stats["camera_errors"].items():
             bias = params["bias"]
@@ -637,7 +645,7 @@ class Report:
         if not details:
             return
 
-        self._make_section("GCP Details")
+        self._make_section(self.locale.t("gcp_details"))
 
         # GSD-based quality thresholds for error cells
         gsd = self.stats["reconstruction_statistics"].get("gsd", -1.0)
@@ -649,7 +657,14 @@ class Report:
         # Inlier ratio quality thresholds (as percentages: bad < 90, avg 90-95, good >= 95)
         inlier_thresholds = (90.0, 95.0, 100.0)
 
-        columns_names = ["GCP ID", "X Error (m)", "Y Error (m)", "Z Error (m)", "Inliers / Total"]
+        dist_short = self.locale.distance_unit_short()
+        columns_names = [
+            self.locale.t("gcp_id"),
+            self.locale.t("x_error_short").format(unit=dist_short),
+            self.locale.t("y_error_short").format(unit=dist_short),
+            self.locale.t("z_error_short").format(unit=dist_short),
+            self.locale.t("inliers_total"),
+        ]
         n_cols = len(columns_names)
         col_sizes = [int(CONTENT_WIDTH / n_cols)] * n_cols
         col_sizes[-1] = CONTENT_WIDTH - sum(col_sizes[:-1])
@@ -683,7 +698,7 @@ class Report:
 
             # X, Y, Z error cells with GSD-based quality dots
             for col_idx, axis in enumerate(["x", "y", "z"], start=1):
-                cell_text = f"{error[axis]:.3f}" if error is not None else "N/A"
+                cell_text = self.locale.format_distance(error[axis], precision=3) if error is not None else "N/A"
                 thresholds = z_thresholds if axis == "z" else xy_thresholds
                 if error is not None and thresholds is not None:
                     abs_err = abs(error[axis])
@@ -713,13 +728,13 @@ class Report:
         if "average_error" not in self.stats["opk_errors"]:
             return
 
-        self._make_section("Orientation Error Details")
-        columns_names = ["Component", "Mean", "Sigma", "RMS Error"]
+        self._make_section(self.locale.t("orientation_details"))
+        columns_names = [self.locale.t("component"), self.locale.t("mean"), self.locale.t("sigma"), self.locale.t("rms_error")]
         error_name = "opk_errors"
 
         rows = []
         for comp in ["omega", "phi", "kappa"]:
-            row = [comp.capitalize() + " Error (degrees)"]
+            row = [self.locale.t(f"{comp}_error")]
             row.append(
                 f"{self.stats[error_name]['mean'][comp]:.3f}")
             row.append(
@@ -730,7 +745,7 @@ class Report:
 
         rows.append(
             [
-                "Total",
+                self.locale.t("total"),
                 "",
                 "",
                 f"{self.stats[error_name]['average_error']:.3f}",
@@ -740,7 +755,7 @@ class Report:
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
 
     def make_features_details(self) -> None:
-        self._make_section("Features Details")
+        self._make_section(self.locale.t("features_details"))
 
         heatmap_height = 60
         heatmaps = [
@@ -753,24 +768,25 @@ class Report:
             if len(heatmaps) > 1:
                 logger.warning("Please implement multi-model display")
 
-        columns_names = ["", "Min.", "Max.", "Mean", "Median"]
+        columns_names = ["", self.locale.t("min"), self.locale.t("max"), self.locale.t("mean"), self.locale.t("median")]
         rows = []
         for comp in ["detected_features", "reconstructed_features"]:
-            row = [comp.replace("_", " ").replace("features", "").capitalize()]
-            for t in columns_names[1:]:
+            label_key = "detected" if "detected" in comp else "reconstructed"
+            row = [self.locale.t(label_key)]
+            for t in ["min", "max", "mean", "median"]:
                 row.append(
-                    f"{self.stats['features_statistics'][comp][t.replace('.', '').lower()]:.0f}"
+                    f"{self.stats['features_statistics'][comp][t]:.0f}"
                 )
             rows.append(row)
         self._make_table(columns_names, rows)
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + SECTION_GAP)
 
     def make_reconstruction_details(self) -> None:
-        self._make_section("Reconstruction Details")
+        self._make_section(self.locale.t("reconstruction_details"))
 
         rows = [
             [
-                "Reprojection Error (norm / px / angular)",
+                self.locale.t("reprojection_error"),
                 (
                     f"{self.stats['reconstruction_statistics']['reprojection_error_normalized']:.2f} / "
                     f"{self.stats['reconstruction_statistics']['reprojection_error_pixels']:.2f} / "
@@ -778,12 +794,12 @@ class Report:
                 ),
             ],
             [
-                "Average Track Length",
-                f"{self.stats['reconstruction_statistics']['average_track_length']:.2f} images",
+                self.locale.t("average_track_length"),
+                f"{self.stats['reconstruction_statistics']['average_track_length']:.2f} {self.locale.t('unit_images')}",
             ],
             [
-                "Average Track Length (> 2)",
-                f"{self.stats['reconstruction_statistics']['average_track_length_over_two']:.2f} images",
+                self.locale.t("average_track_length_gt2"),
+                f"{self.stats['reconstruction_statistics']['average_track_length_over_two']:.2f} {self.locale.t('unit_images')}",
             ],
         ]
         self._make_table(None, rows, True)
@@ -803,7 +819,7 @@ class Report:
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
 
     def make_camera_models_details(self) -> None:
-        self._make_section("Camera Models Details")
+        self._make_section(self.locale.t("camera_models_details"))
 
         for camera, params in self.stats["camera_errors"].items():
             string_id = "residuals_" + str(camera.replace("/", "_"))
@@ -821,10 +837,10 @@ class Report:
             names = [""] + list(initial.keys())
 
             rows = []
-            rows.append(["Initial"] + [f"{x:.4f}" for x in initial.values()])
-            rows.append(["Optimized"] +
+            rows.append([self.locale.t("initial")] + [f"{x:.4f}" for x in initial.values()])
+            rows.append([self.locale.t("optimized")] +
                         [f"{x:.4f}" for x in optimized.values()])
-            rows.append(["Rel. Diff (%)"] +
+            rows.append([self.locale.t("rel_diff_pct")] +
                         [f"{rel_diff.get(k, 0.0):.2f}" for k in initial.keys()])
 
             self._make_subsection(camera)
@@ -841,15 +857,15 @@ class Report:
         if len(self.stats["rig_errors"]) == 0:
             return
 
-        self._make_section("Rig Cameras Details")
+        self._make_section(self.locale.t("rig_cameras_details"))
 
         columns_names = [
-            "Translation X",
-            "Translation Y",
-            "Translation Z",
-            "Rotation X",
-            "Rotation Y",
-            "Rotation Z",
+            self.locale.t("translation_x"),
+            self.locale.t("translation_y"),
+            self.locale.t("translation_z"),
+            self.locale.t("rotation_x"),
+            self.locale.t("rotation_y"),
+            self.locale.t("rotation_z"),
         ]
         for rig_camera_id, params in self.stats["rig_errors"].items():
             initial = params["initial_values"]
@@ -860,9 +876,9 @@ class Report:
             r_opt, t_opt = optimized["rotation"], optimized["translation"]
             rows.append(
                 [
-                    f"{t_init[0]:.4f} m",
-                    f"{t_init[1]:.4f} m",
-                    f"{t_init[2]:.4f} m",
+                    self.locale.format_distance(t_init[0], precision=4),
+                    self.locale.format_distance(t_init[1], precision=4),
+                    self.locale.format_distance(t_init[2], precision=4),
                     f"{r_init[0]:.4f}",
                     f"{r_init[1]:.4f}",
                     f"{r_init[2]:.4f}",
@@ -870,9 +886,9 @@ class Report:
             )
             rows.append(
                 [
-                    f"{t_opt[0]:.4f} m",
-                    f"{t_opt[1]:.4f} m",
-                    f"{t_opt[2]:.4f} m",
+                    self.locale.format_distance(t_opt[0], precision=4),
+                    self.locale.format_distance(t_opt[1], precision=4),
+                    self.locale.format_distance(t_opt[2], precision=4),
                     f"{r_opt[0]:.4f}",
                     f"{r_opt[1]:.4f}",
                     f"{r_opt[2]:.4f}",
@@ -884,7 +900,7 @@ class Report:
             self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
 
     def make_tracks_details(self) -> None:
-        self._make_section("Tracks Details")
+        self._make_section(self.locale.t("tracks_details"))
         matchgraph_height = 80
         matchgraph = [
             f
@@ -898,12 +914,12 @@ class Report:
 
         histogram = self.stats["reconstruction_statistics"]["histogram_track_length"]
         start_length, end_length = 2, 10
-        row_length = ["Length"]
+        row_length = [self.locale.t("length")]
         for length, _ in sorted(histogram.items(), key=lambda x: int(x[0])):
             if int(length) < start_length or int(length) > end_length:
                 continue
             row_length.append(length)
-        row_count = ["Count"]
+        row_count = [self.locale.t("count")]
         for length, count in sorted(histogram.items(), key=lambda x: int(x[0])):
             if int(length) < start_length or int(length) > end_length:
                 continue
@@ -917,15 +933,15 @@ class Report:
         if not overlap:
             return
 
-        self._make_section("Overlap Summary")
+        self._make_section(self.locale.t("overlap_summary"))
 
         # Display stats table
         front_mean = overlap.get("front_overlap_mean", 0.0)
         side_mean = overlap.get("side_overlap_mean", 0.0)
 
         rows = [
-            ["Front Overlap (mean)", f"{front_mean:.1f}%"],
-            ["Side Overlap (mean)", f"{side_mean:.1f}%"],
+            [self.locale.t("front_overlap_mean"), f"{front_mean:.1f}%"],
+            [self.locale.t("side_overlap_mean"), f"{side_mean:.1f}%"],
         ]
         self._make_table(None, rows, True)
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
