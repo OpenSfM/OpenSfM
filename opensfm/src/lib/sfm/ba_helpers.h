@@ -115,7 +115,7 @@ class BAHelpers {
   static bool TriangulateGCP(
       const map::GroundControlPoint& point,
       const std::unordered_map<map::ShotId, map::Shot>& shots,
-      float reproj_threshold, Vec3d& coordinates);
+      float reproj_threshold, Vec3d& coordinates, std::vector<bool>& inliers);
 
   static void AlignmentConstraints(
       const map::Map& map, const py::dict& config,

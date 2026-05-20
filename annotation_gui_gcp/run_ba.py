@@ -138,7 +138,7 @@ def triangulate_gcps(
             reproj_threshold=1,
             min_ray_angle_degrees=0.1,
         )
-        coords.append(res)
+        coords.append(res[0] if res is not None else None)
     return coords
 
 
@@ -149,7 +149,7 @@ def reproject_gcps(
 ):
     output = {}
     for gcp in gcps:
-        point = multiview.triangulate_gcp(
+        result = multiview.triangulate_gcp(
             gcp,
             reconstruction.shots,
             reproj_threshold=reproj_threshold,
@@ -157,10 +157,11 @@ def reproject_gcps(
         )
         output[gcp.id] = {}
         n_obs = len(gcp.observations)
-        if point is None:
+        if result is None:
             logger.info(
                 f"Could not triangulate {gcp.id} with {n_obs} annotations")
             continue
+        point = result[0]
         for observation in gcp.observations:
             lat, lon, alt = reconstruction.reference.to_lla(*point)
             output[gcp.id][observation.shot_id] = {
@@ -239,12 +240,13 @@ def add_gcp_to_bundle(
     for point in gcp:
         point_id = "gcp-" + point.id
 
-        coordinates = multiview.triangulate_gcp(
+        tri_result = multiview.triangulate_gcp(
             point,
             shots,
             reproj_threshold=1,
             min_ray_angle_degrees=0.1,
         )
+        coordinates = tri_result[0] if tri_result is not None else None
         if coordinates is None:
             if point.lla:
                 enu = reference.to_topocentric(*point.lla_vec)
@@ -410,18 +412,18 @@ def resect_image(im, camera, gcps, reconstruction, data, dst_reconstruction=None
         obs = _gcp_image_observation(gcp, im)
         if not obs:
             continue
-        gcp_3d_coords = multiview.triangulate_gcp(
+        gcp_result = multiview.triangulate_gcp(
             gcp,
             reconstruction.shots,
             reproj_threshold=1,
             min_ray_angle_degrees=0.1,
         )
-        if gcp_3d_coords is None:
+        if gcp_result is None:
             continue
 
         b = camera.pixel_bearing(obs.projection)
         bs.append(b)
-        Xs.append(gcp_3d_coords)
+        Xs.append(gcp_result[0])
     bs = np.array(bs)
     Xs = np.array(Xs)
 

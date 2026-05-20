@@ -116,26 +116,48 @@ def gcp_errors(
         return {}
 
     all_errors = []
+    gcp_details: List[Dict[str, Any]] = []
     for gcp in gcps:
         if not gcp.lla:
             continue
 
-        triangulated = None
+        result = None
         for rec in reconstructions:
-            triangulated = multiview.triangulate_gcp(
+            result = multiview.triangulate_gcp(
                 gcp, rec.shots, data.config["gcp_reprojection_error_threshold"]
             )
-            if triangulated is None:
-                continue
-            else:
+            if result is not None:
                 break
 
-        if triangulated is None:
-            continue
-        gcp_enu = reference.to_topocentric(*gcp.lla_vec)
-        all_errors.append(triangulated - gcp_enu)
+        gcp_enu = np.array(reference.to_topocentric(*gcp.lla_vec))
 
-    return _gps_gcp_opk_errors_stats(np.array(all_errors), ["x", "y", "z"])
+        if result is None:
+            # Count total projections with a valid shot
+            n_total = sum(
+                1 for obs in gcp.observations
+                if any(obs.shot_id in rec.shots for rec in reconstructions)
+            )
+            gcp_details.append({
+                "id": gcp.id,
+                "error": None,
+                "n_inliers": 0,
+                "n_total": n_total,
+            })
+            continue
+
+        triangulated, inliers_mask = result
+        error = triangulated - gcp_enu
+        all_errors.append(error)
+        gcp_details.append({
+            "id": gcp.id,
+            "error": {"x": float(error[0]), "y": float(error[1]), "z": float(error[2])},
+            "n_inliers": sum(inliers_mask),
+            "n_total": len(inliers_mask),
+        })
+
+    stats = _gps_gcp_opk_errors_stats(np.array(all_errors), ["x", "y", "z"])
+    stats["details"] = gcp_details
+    return stats
 
 
 def _compute_errors(

@@ -1033,9 +1033,10 @@ def _compute_gcp_triangulations(
     triangulations = {}
     for point in gcp:
         if point.lla:
-            triangulations[point.id] = multiview.triangulate_gcp(
+            result = multiview.triangulate_gcp(
                 point, reconstruction.shots, data.config["gcp_reprojection_error_threshold"]
             )
+            triangulations[point.id] = result[0] if result is not None else None
     return triangulations
 
 

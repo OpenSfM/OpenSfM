@@ -534,8 +534,13 @@ def triangulate_gcp(
     min_ray_angle_degrees: float = 1.0,
     min_depth: float = 0.001,
     iterations: int = 10,
-) -> Optional[NDArray]:
-    """Compute the reconstructed position of a GCP from observations."""
+) -> Optional[Tuple[NDArray, List[bool]]]:
+    """Compute the reconstructed position of a GCP from observations.
+
+    Returns a tuple (3D position, inliers mask) where inliers mask is a
+    boolean list aligned with the observations that have a matching shot,
+    or None if triangulation fails.
+    """
 
     os, bs, ids = [], [], []
     for observation in point.observations:
@@ -550,18 +555,19 @@ def triangulate_gcp(
             ids.append(shot_id)
 
     if len(os) >= 2:
-        thresholds = len(os) * [reproj_threshold]
         os = np.asarray(os)
         bs = np.asarray(bs)
-        valid_triangulation, X = pygeometry.triangulate_bearings_midpoint(
+        valid, X, inlier_indices = pygeometry.triangulate_bearings_robust(
             os,
             bs,
-            thresholds,
+            reproj_threshold,
             np.radians(min_ray_angle_degrees),
             min_depth,
+            iterations,
         )
-        
-        if valid_triangulation:
-            X = pygeometry.point_refinement(os, bs, X, iterations)
-            return X
+
+        if valid:
+            inliers_set = set(inlier_indices)
+            inliers_mask = [i in inliers_set for i in range(len(os))]
+            return X, inliers_mask
     return None

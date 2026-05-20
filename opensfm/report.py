@@ -318,6 +318,40 @@ class Report:
 
         self.pdf.set_xy(self.margin, self.pdf.get_y() + self.margin / 2)
 
+    def make_gcp_details(self) -> None:
+        gcp_errors = self.stats.get("gcp_errors", {})
+        details = gcp_errors.get("details", [])
+        if not details:
+            return
+
+        self._make_section("GCP Details")
+
+        columns_names = ["GCP ID", "X Error (m)", "Y Error (m)", "Z Error (m)", "Inliers / Total"]
+        rows = []
+        for entry in details:
+            gcp_id = entry["id"]
+            error = entry["error"]
+            n_inliers = entry["n_inliers"]
+            n_total = entry["n_total"]
+            if error is not None:
+                rows.append([
+                    gcp_id,
+                    f"{error['x']:.3f}",
+                    f"{error['y']:.3f}",
+                    f"{error['z']:.3f}",
+                    f"{n_inliers} / {n_total}",
+                ])
+            else:
+                rows.append([
+                    gcp_id,
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    f"{n_inliers} / {n_total}",
+                ])
+        self._make_table(columns_names, rows)
+        self.pdf.set_xy(self.margin, self.pdf.get_y() + self.margin / 2)
+
     def make_orientation_details(self) -> None:
         if "opk_errors" not in self.stats:
             return
@@ -538,5 +572,6 @@ class Report:
         self.add_page_break()
 
         self.make_gps_details()
+        self.make_gcp_details()
         self.make_orientation_details()
         self.make_processing_time_details()

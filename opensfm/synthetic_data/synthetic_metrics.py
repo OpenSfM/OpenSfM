@@ -56,8 +56,9 @@ def gcp_errors(
         if triangulated is None:
             continue
 
+        x, _inliers = triangulated
         gcp_enu = candidate.reference.to_topocentric(*gcp.lla_vec)
-        errors.append(triangulated - gcp_enu)
+        errors.append(x - gcp_enu)
     return np.array(errors)
 
 

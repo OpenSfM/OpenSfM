@@ -439,9 +439,10 @@ py::tuple BAHelpers::BundleLocalPython(
 bool BAHelpers::TriangulateGCP(
     const map::GroundControlPoint& point,
     const std::unordered_map<map::ShotId, map::Shot>& shots,
-    float reproj_threshold, Vec3d& coordinates) {
+    float reproj_threshold, Vec3d& coordinates, std::vector<bool>& inliers) {
   constexpr auto min_ray_angle = 0.1 * M_PI / 180.0;
   constexpr auto min_depth = 1e-3;  // Assume GCPs 1mm+ away from the camera
+  constexpr auto refinement_iterations = 10;
   MatX3d os, bs;
   size_t added = 0;
   coordinates = Vec3d::Zero();
@@ -460,12 +461,19 @@ bool BAHelpers::TriangulateGCP(
   }
   bs.conservativeResize(added, Eigen::NoChange);
   os.conservativeResize(added, Eigen::NoChange);
+  inliers.assign(added, false);
   if (added >= 2) {
-    const std::vector<double> thresholds(added, reproj_threshold);
-    const auto& res = geometry::TriangulateBearingsMidpoint(
-        os, bs, thresholds, min_ray_angle, min_depth);
-    coordinates = res.second;
-    return res.first;
+    const auto [success, point3d, inlier_indices] =
+        geometry::TriangulateBearingsRobust(os, bs, reproj_threshold,
+                                            min_ray_angle, min_depth,
+                                            refinement_iterations);
+    if (success) {
+      coordinates = point3d;
+      for (int idx : inlier_indices) {
+        inliers[idx] = true;
+      }
+    }
+    return success;
   }
   return false;
 }
@@ -492,7 +500,8 @@ size_t BAHelpers::AddGCPToBundle(
   for (const auto& point : gcp) {
     const auto point_id = "gcp-" + point.id_;
     Vec3d coordinates;
-    if (!TriangulateGCP(point, shots, reproj_threshold, coordinates)) {
+    std::vector<bool> inliers;
+    if (!TriangulateGCP(point, shots, reproj_threshold, coordinates, inliers)) {
       continue;
     }
 
@@ -1195,10 +1204,11 @@ void BAHelpers::AlignmentConstraints(
         continue;
       }
       Vec3d coordinates;
+      std::vector<bool> inliers_unused;
       if (TriangulateGCP(
               point, shots,
               config["gcp_reprojection_error_threshold"].cast<float>(),
-              coordinates)) {
+              coordinates, inliers_unused)) {
         Xp.row(idx) = topocentricConverter.ToTopocentric(point.GetLlaVec3d());
         X.row(idx) = coordinates;
         ++idx;
@@ -1246,7 +1256,9 @@ bundle::SimilarityParameterMask BAHelpers::DetermineGCPBiasParameters(
   std::vector<Vec3d> gcp_positions;
   for (const auto& point : gcp) {
     Vec3d coordinates;
-    if (TriangulateGCP(point, shots, reproj_threshold, coordinates)) {
+    std::vector<bool> inliers_unused;
+    if (TriangulateGCP(point, shots, reproj_threshold, coordinates,
+                       inliers_unused)) {
       gcp_positions.push_back(coordinates);
     }
   }

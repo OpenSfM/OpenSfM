@@ -533,12 +533,13 @@ def triangulate_all_gcp(
     """Group and triangulate Ground Control Points seen in 2+ images."""
     triangulated, measured = [], []
     for point in gcp:
-        x = multiview.triangulate_gcp(
+        result = multiview.triangulate_gcp(
             point,
             reconstruction.shots,
             threshold,
         )
-        if x is not None and len(point.lla):
+        if result is not None and len(point.lla):
+            x, _inliers = result
             point_enu = np.array(
                 reconstruction.reference.to_topocentric(*point.lla_vec)
             )

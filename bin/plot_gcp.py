@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import opensfm.reconstruction as orec
-from opensfm import dataset, features, io, pymap, types
+from opensfm import dataset, features, io, multiview, pymap, types
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ def gcp_to_ply(
         if gcp.lla:
             p = reconstruction.reference.to_topocentric(*gcp.lla_vec)
         else:
-            p = orec.triangulate_gcp(gcp, reconstruction.shots)
+            result = multiview.triangulate_gcp(gcp, reconstruction.shots)
+            p = result[0] if result is not None else None
 
         if p is None:
             logger.warning(
@@ -88,7 +89,8 @@ def main():
         if gcp.lla:
             coordinates = reconstruction.reference.to_topocentric(*gcp.lla_vec)
         else:
-            coordinates = orec.triangulate_gcp(gcp, reconstruction.shots)
+            result = multiview.triangulate_gcp(gcp, reconstruction.shots)
+            coordinates = result[0] if result is not None else None
 
         if coordinates is None:
             logger.warning(
