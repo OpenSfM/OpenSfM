@@ -13,6 +13,10 @@ import matplotlib as mpl
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
+import scipy.spatial as spatial
+from matplotlib.path import Path as MplPath
+from matplotlib.patches import Patch
+
 import numpy as np
 from numpy.typing import NDArray
 from opensfm import feature_loader, geo, geometry, io, multiview, pygeometry, pymap, types
@@ -629,6 +633,7 @@ def compute_all_statistics(
     stats["gps_errors"] = gps_errors(reconstructions)
     stats["gcp_errors"] = gcp_errors(data, reconstructions)
     stats["opk_errors"] = opk_errors(reconstructions)
+    stats["overlap"] = overlap_statistics(reconstructions, tracks_manager)
 
     return stats
 
@@ -1205,6 +1210,394 @@ def save_residual_grids(
                 dpi=300,
                 bbox_inches="tight",
             )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Overlap computation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _compute_ground_plane_z(
+    reconstructions: List[types.Reconstruction],
+) -> float:
+    """Compute median Z (altitude) of all reconstruction 3D points."""
+    zs = []
+    for rec in reconstructions:
+        for point in rec.points.values():
+            zs.append(point.coordinates[2])
+    if not zs:
+        return 0.0
+    return float(np.median(zs))
+
+
+def _compute_shot_footprint(
+    shot: pymap.Shot, ground_z: float
+) -> Optional[NDArray]:
+    """Compute the ground footprint of a shot by ray-plane intersection.
+
+    Returns a (4, 2) array of XY world coordinates, or None if degenerate.
+    """
+    if pygeometry.Camera.is_panorama(shot.camera.projection_type):
+        return None
+
+    w = shot.camera.width
+    h = shot.camera.height
+    if w <= 0 or h <= 0:
+        return None
+
+    # Image corners in normalized coords
+    size = max(w, h)
+    corners_px = np.array([
+        [0.0, 0.0],
+        [w - 1.0, 0.0],
+        [w - 1.0, h - 1.0],
+        [0.0, h - 1.0],
+    ])
+    corners_norm = np.empty((4, 2))
+    corners_norm[:, 0] = (corners_px[:, 0] + 0.5 - w / 2.0) / size
+    corners_norm[:, 1] = (corners_px[:, 1] + 0.5 - h / 2.0) / size
+
+    # Get bearing rays in camera frame
+    bearings = shot.camera.pixel_bearing_many(corners_norm)  # (4, 3)
+
+    # Transform to world frame
+    R = shot.pose.get_rotation_matrix()
+    origin = shot.pose.get_origin()
+
+    # Ray-plane intersection: find t such that (origin + t * direction).z = ground_z
+    world_bearings = (R.T @ bearings.T).T  # (4, 3) in world frame
+
+    footprint = np.empty((4, 2))
+    for i in range(4):
+        dz = world_bearings[i, 2]
+        if abs(dz) < 1e-9:
+            return None  # ray parallel to ground
+        t = (ground_z - origin[2]) / dz
+        if t < 0:
+            return None  # camera looking away from ground
+        footprint[i, 0] = origin[0] + t * world_bearings[i, 0]
+        footprint[i, 1] = origin[1] + t * world_bearings[i, 1]
+
+    return footprint
+
+
+_OVERLAP_GRID_SIZE = 50
+
+
+def _rasterized_overlap_ratio(
+    fp_a: NDArray, fp_b: NDArray, grid_size: int = _OVERLAP_GRID_SIZE
+) -> float:
+    """Compute overlap ratio by rasterizing two footprints onto a grid.
+
+    Rasterizes both quadrilateral footprints (4x2) onto a common grid and
+    computes intersection_pixels / min(pixels_a, pixels_b).
+    """
+    # Combined bounding box
+    all_pts = np.vstack([fp_a, fp_b])
+    min_x, min_y = all_pts[:, 0].min(), all_pts[:, 1].min()
+    max_x, max_y = all_pts[:, 0].max(), all_pts[:, 1].max()
+    extent_x = max_x - min_x
+    extent_y = max_y - min_y
+    if extent_x < 1e-9 or extent_y < 1e-9:
+        return 0.0
+
+    # Sample grid cell centers
+    half_dx = extent_x / grid_size / 2.0
+    half_dy = extent_y / grid_size / 2.0
+    xs = np.linspace(min_x + half_dx, max_x - half_dx, grid_size)
+    ys = np.linspace(min_y + half_dy, max_y - half_dy, grid_size)
+    xv, yv = np.meshgrid(xs, ys)
+    grid_points = np.column_stack([xv.ravel(), yv.ravel()])
+
+    path_a = MplPath(fp_a)
+    path_b = MplPath(fp_b)
+    inside_a = path_a.contains_points(grid_points)
+    inside_b = path_b.contains_points(grid_points)
+
+    count_a = int(inside_a.sum())
+    count_b = int(inside_b.sum())
+    count_inter = int((inside_a & inside_b).sum())
+
+    min_count = min(count_a, count_b)
+    if min_count == 0:
+        return 0.0
+    return count_inter / min_count
+
+
+def _compute_front_overlap(
+    reconstructions: List[types.Reconstruction],
+    ground_z: float,
+    max_samples: int = 100,
+) -> List[float]:
+    """Compute overlap ratio between time-successive shot pairs.
+
+    Randomly samples at most *max_samples* consecutive pairs to limit
+    computation time while preserving the true front overlap distribution.
+    """
+    overlaps = []
+    for rec in reconstructions:
+        shots_with_time = [
+            s for s in rec.shots.values()
+            if s.metadata.capture_time.has_value
+        ]
+        if len(shots_with_time) < 2:
+            continue
+        sorted_shots = sorted(
+            shots_with_time, key=lambda s: s.metadata.capture_time.value
+        )
+
+        # Build list of valid consecutive pairs (both have footprints)
+        n = len(sorted_shots)
+        footprints = [_compute_shot_footprint(s, ground_z) for s in sorted_shots]
+
+        valid_pairs: List[Tuple[int, int]] = []
+        for i in range(n - 1):
+            if footprints[i] is not None and footprints[i + 1] is not None:
+                valid_pairs.append((i, i + 1))
+
+        # Sample randomly if too many pairs
+        if len(valid_pairs) > max_samples:
+            valid_pairs = random.sample(valid_pairs, max_samples)
+
+        for i, j in valid_pairs:
+            overlaps.append(_rasterized_overlap_ratio(footprints[i], footprints[j]))
+    return overlaps
+
+
+def _compute_side_overlap(
+    reconstructions: List[types.Reconstruction],
+    ground_z: float,
+    alignment_threshold: float = 0.5,
+    max_samples: int = 100,
+) -> List[float]:
+    """Compute overlap between lateral (cross-strip) shot pairs.
+
+    For each shot, computes the local flight direction, then finds the nearest
+    neighbor (by ground footprint centroid distance) whose direction is NOT
+    aligned with the flight path (|dot| < alignment_threshold). Using footprint
+    centroids ensures we find shots that look at nearby ground areas, even if
+    their camera XY positions are far apart.
+
+    Samples at most *max_samples* shots to limit computation time.
+    """
+
+    overlaps = []
+    for rec in reconstructions:
+        shots_with_time = [
+            s for s in rec.shots.values()
+            if s.metadata.capture_time.has_value
+        ]
+        if len(shots_with_time) < 4:
+            continue
+        sorted_shots = sorted(
+            shots_with_time, key=lambda s: s.metadata.capture_time.value
+        )
+        n = len(sorted_shots)
+
+        # Precompute footprints and their centroids (representative ground points)
+        footprints: Dict[int, NDArray] = {}
+        centroids = np.full((n, 2), np.nan)
+        for i, s in enumerate(sorted_shots):
+            fp = _compute_shot_footprint(s, ground_z)
+            if fp is not None:
+                footprints[i] = fp
+                centroids[i] = fp.mean(axis=0)
+
+        # Filter to shots with valid footprints
+        valid_indices = [i for i in range(n) if i in footprints]
+        if len(valid_indices) < 2:
+            continue
+
+        # Camera positions for flight direction (use camera XY, not ground)
+        positions = np.array([sorted_shots[i].pose.get_origin()[:2] for i in range(n)])
+
+        # Compute local flight direction for each shot (central difference)
+        flight_dirs = np.zeros((n, 2))
+        for i in range(n):
+            if i == 0:
+                d = positions[1] - positions[0]
+            elif i == n - 1:
+                d = positions[n - 1] - positions[n - 2]
+            else:
+                d = positions[i + 1] - positions[i - 1]
+            norm = math.sqrt(d[0]**2 + d[1]**2)
+            if norm > 1e-9:
+                flight_dirs[i] = d / norm
+
+        # Build kd-tree on footprint centroids (representative ground points)
+        valid_centroids = centroids[valid_indices]
+        tree = spatial.cKDTree(valid_centroids)
+
+        # Select indices to evaluate (sample randomly if too many)
+        if len(valid_indices) > max_samples:
+            eval_indices = random.sample(valid_indices, max_samples)
+        else:
+            eval_indices = valid_indices
+
+        # For each sampled shot, find nearest neighbor perpendicular to flight direction
+        k = min(30, len(valid_indices))
+        for idx in eval_indices:
+            fd = flight_dirs[idx]
+            if fd[0] == 0 and fd[1] == 0:
+                continue
+
+            # Find position of idx in valid_indices for tree query
+            centroid = centroids[idx]
+            distances, tree_neighbors = tree.query(centroid, k=k)
+            if isinstance(tree_neighbors, int):
+                tree_neighbors = [tree_neighbors]
+                distances = [distances]
+
+            for d, tree_n in zip(distances, tree_neighbors):
+                if tree_n >= len(valid_indices):
+                    continue
+                n_idx = valid_indices[tree_n]
+                if n_idx == idx:
+                    continue
+                if d < 1e-9:
+                    continue
+                # Direction from current centroid to neighbor centroid
+                to_neighbor = centroids[n_idx] - centroid
+                to_neighbor_norm = math.sqrt(to_neighbor[0]**2 + to_neighbor[1]**2)
+                if to_neighbor_norm < 1e-9:
+                    continue
+                to_neighbor = to_neighbor / to_neighbor_norm
+                # Check alignment: low |dot| means perpendicular to flight path
+                alignment = abs(fd[0] * to_neighbor[0] + fd[1] * to_neighbor[1])
+                if alignment < alignment_threshold:
+                    overlap = _rasterized_overlap_ratio(
+                        footprints[idx], footprints[n_idx]
+                    )
+                    overlaps.append(overlap)
+                    break  # take nearest perpendicular neighbor only
+    return overlaps
+
+
+def overlap_statistics(
+    reconstructions: List[types.Reconstruction],
+    tracks_manager: pymap.TracksManager,
+) -> Dict[str, Any]:
+    """Compute front/side overlap stats."""
+    ground_z = _compute_ground_plane_z(reconstructions)
+    front = _compute_front_overlap(reconstructions, ground_z)
+    side = _compute_side_overlap(reconstructions, ground_z)
+    stats: Dict[str, Any] = {"ground_z": ground_z}
+    if front:
+        stats["front_overlap_mean"] = float(np.mean(front)) * 100.0
+        stats["front_overlap_median"] = float(np.median(front)) * 100.0
+    else:
+        stats["front_overlap_mean"] = 0.0
+        stats["front_overlap_median"] = 0.0
+    if side:
+        stats["side_overlap_mean"] = float(np.mean(side)) * 100.0
+        stats["side_overlap_median"] = float(np.median(side)) * 100.0
+    else:
+        stats["side_overlap_mean"] = 0.0
+        stats["side_overlap_median"] = 0.0
+    return stats
+
+
+def save_overlap_map(
+    reconstructions: List[types.Reconstruction],
+    output_path: str,
+    io_handler: io.IoFilesystemBase,
+) -> None:
+    """Rasterize camera footprints and save a color-coded overlap map PNG."""
+
+    ground_z = _compute_ground_plane_z(reconstructions)
+
+    # Collect all valid footprints
+    footprints = []
+    for rec in reconstructions:
+        for shot in rec.shots.values():
+            fp = _compute_shot_footprint(shot, ground_z)
+            if fp is not None:
+                footprints.append(fp)
+
+    if not footprints:
+        return
+
+    # Compute world extent
+    all_pts = np.vstack(footprints)
+    min_x, min_y = all_pts[:, 0].min(), all_pts[:, 1].min()
+    max_x, max_y = all_pts[:, 0].max(), all_pts[:, 1].max()
+    extent_x = max_x - min_x
+    extent_y = max_y - min_y
+    if extent_x < 1e-6 or extent_y < 1e-6:
+        return
+
+    # Add margin
+    margin = 0.05
+    min_x -= extent_x * margin
+    min_y -= extent_y * margin
+    max_x += extent_x * margin
+    max_y += extent_y * margin
+    extent_x = max_x - min_x
+    extent_y = max_y - min_y
+
+    # Grid resolution: target ~1000px on longest side
+    target_px = 1000
+    if extent_x > extent_y:
+        nx = target_px
+        ny = max(1, int(target_px * extent_y / extent_x))
+    else:
+        ny = target_px
+        nx = max(1, int(target_px * extent_x / extent_y))
+
+    # Build grid of sample points
+    xs = np.linspace(min_x, max_x, nx)
+    ys = np.linspace(min_y, max_y, ny)
+    xv, yv = np.meshgrid(xs, ys)
+    grid_points = np.column_stack([xv.ravel(), yv.ravel()])  # (ny*nx, 2)
+
+    # Count how many footprints cover each cell
+    counts = np.zeros(ny * nx, dtype=np.int32)
+    for fp in footprints:
+        path = MplPath(fp)
+        inside = path.contains_points(grid_points)
+        counts += inside.astype(np.int32)
+
+    counts_2d = counts.reshape(ny, nx)
+
+    # Color map: 0=white, 1=light grey, 2=red, 3=yellow, 4=green, 5+=blue
+    rgba = np.ones((ny, nx, 4), dtype=np.float32)  # white with full alpha
+    # 1 views: red
+    mask2 = counts_2d == 1
+    rgba[mask2] = [0.86, 0.21, 0.27, 1.0]
+    # 2 views: yellow/amber
+    mask3 = counts_2d == 2
+    rgba[mask3] = [0.96, 0.62, 0.04, 1.0]
+    # 3 views: light green
+    mask4 = counts_2d == 3
+    rgba[mask4] = [0.10, 0.72, 0.34, 1.0]
+    # 4 views: green
+    mask5 = counts_2d == 4
+    rgba[mask5] = [0.00, 0.62, 0.52, 1.0]
+    # 5 views: blue
+    mask5 = counts_2d >= 5
+    rgba[mask5] = [0.12, 0.46, 0.70, 1.0]
+
+    # Create figure with legend
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10 * ny / nx))
+    ax.imshow(rgba, origin="lower", extent=[min_x, max_x, min_y, max_y], aspect="equal")
+    ax.set_xlabel("X (meters)")
+    ax.set_ylabel("Y (meters)")
+    ax.set_title("Overlap Map")
+
+    # Legend
+
+    legend_elements = [
+        Patch(facecolor=(0.86, 0.21, 0.27), label="1 views"),
+        Patch(facecolor=(0.96, 0.62, 0.04), label="2 views"),
+        Patch(facecolor=(0.10, 0.72, 0.34), label="3 views"),
+        Patch(facecolor=(0.00, 0.62, 0.52), label="4 views"),
+        Patch(facecolor=(0.12, 0.46, 0.70), label="5+ views"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper right", framealpha=0.9)
+
+    with io_handler.open_wb(os.path.join(output_path, "overlap_map.png")) as fwb:
+        plt.savefig(fwb, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def decimate_points(

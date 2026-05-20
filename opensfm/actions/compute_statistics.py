@@ -40,6 +40,9 @@ def run_dataset(data: DataSet, diagram_max_points: int = -1) -> None:
     stats.save_topview(
         data, tracks_manager, reconstructions, output_path, data.io_handler
     )
+    stats.save_overlap_map(
+        reconstructions, output_path, data.io_handler
+    )
 
     with data.io_handler.open_wt(os.path.join(output_path, "stats.json")) as fout:
         io.json_dump(stats_dict, fout)

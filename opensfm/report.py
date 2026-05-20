@@ -836,6 +836,36 @@ class Report:
         self._make_table(None, [row_length, row_count], True)
         self.pdf.set_xy(MARGIN, self.pdf.get_y() + SECTION_GAP)
 
+    def make_overlap_summary(self) -> None:
+        overlap = self.stats.get("overlap", {})
+        if not overlap:
+            return
+
+        self._make_section("Overlap Summary")
+
+        # Display stats table
+        front_mean = overlap.get("front_overlap_mean", 0.0)
+        side_mean = overlap.get("side_overlap_mean", 0.0)
+
+        rows = [
+            ["Front Overlap (mean)", f"{front_mean:.1f}%"],
+            ["Side Overlap (mean)", f"{side_mean:.1f}%"],
+        ]
+        self._make_table(None, rows, True)
+        self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
+
+        # Display overlap map image
+        overlap_maps = [
+            f for f in self.io_handler.ls(self.output_path)
+            if f.startswith("overlap_map") and f.endswith(".png")
+        ]
+        if overlap_maps:
+            self._make_centered_image(
+                os.path.join(self.output_path, overlap_maps[0]), 120
+            )
+
+        self.pdf.set_xy(MARGIN, self.pdf.get_y() + TABLE_GAP)
+
     def add_page_break(self) -> None:
         self.pdf.add_page("P")
 
@@ -854,6 +884,7 @@ class Report:
         self.make_rig_cameras_details()
         self.add_page_break()
 
+        self.make_overlap_summary()
         self.make_gps_details()
         self.make_gcp_details()
         self.make_orientation_details()
