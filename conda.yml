@@ -6,6 +6,7 @@ dependencies:
     - ninja
     - make
     - libxcrypt # [linux] [osx]
+    - libvorbis # [osx]
     - libopencv *=headless*
     - py-opencv
     - anaconda::metis
