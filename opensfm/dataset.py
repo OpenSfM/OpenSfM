@@ -639,6 +639,18 @@ class DataSet(DataSetBase):
 
         return gcp + pcs
 
+    def load_gcp_coordinate_system(self) -> Optional[str]:
+        """Return the CRS string from the first line of gcp_list.txt.
+
+        Returns "WGS84" when no projection is specified, None if no gcp_list.txt exists.
+        """
+        if not self.io_handler.isfile(self._gcp_list_file()):
+            return None
+        with self.io_handler.open_rt(self._gcp_list_file()) as fin:
+            proj = io.read_gcp_projection_string(fin)
+        # None means identity / WGS84
+        return proj if proj is not None else "WGS84"
+
     def save_ground_control_points(
         self,
         points: List[pymap.GroundControlPoint],

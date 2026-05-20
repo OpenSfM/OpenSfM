@@ -234,6 +234,16 @@ class DataSetBase(ABC):
         pass
 
     @abstractmethod
+    def load_gcp_coordinate_system(self) -> Optional[str]:
+        """Return the CRS of the GCP file.
+
+        Returns "WGS84" when gcp_list.txt uses the default geographic system,
+        a CRS/PROJ string for projected systems, and None when no gcp_list.txt
+        is present.
+        """
+        pass
+
+    @abstractmethod
     def save_ground_control_points(
         self, points: List[pymap.GroundControlPoint]
     ) -> None:

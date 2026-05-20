@@ -15,7 +15,7 @@ import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import feature_loader, geometry, io, multiview, pygeometry, pymap, types
+from opensfm import feature_loader, geo, geometry, io, multiview, pygeometry, pymap, types
 from opensfm.dataset import DataSet, DataSetBase
 
 RESIDUAL_PIXEL_CUTOFF = 4
@@ -74,9 +74,22 @@ def _gps_gcp_opk_errors_stats(errors: Optional[NDArray], names: List[str]) -> Di
 
 def gps_errors(reconstructions: List[types.Reconstruction]) -> Dict[str, Any]:
     all_errors = []
+    all_gps_std = []
     for rec in reconstructions:
         all_errors += _gps_errors(rec)
-    return _gps_gcp_opk_errors_stats(np.array(all_errors), ["x", "y", "z"])
+        for shot in rec.shots.values():
+            if shot.metadata.gps_position.has_value:
+                if shot.metadata.gps_accuracy.has_value:
+                    all_gps_std.append(np.array(shot.metadata.gps_accuracy.value))
+                else:
+                    all_gps_std.append(geo.DEFAULT_GPS_STD)
+    stats = _gps_gcp_opk_errors_stats(np.array(all_errors), ["x", "y", "z"])
+    if all_gps_std:
+        avg_std = np.mean(all_gps_std, axis=0)
+        stats["average_gps_std"] = {
+            "x": float(avg_std[0]), "y": float(avg_std[1]), "z": float(avg_std[2])
+        }
+    return stats
 
 
 def _opk_errors(reconstruction: types.Reconstruction) -> List[NDArray]:
@@ -157,6 +170,9 @@ def gcp_errors(
 
     stats = _gps_gcp_opk_errors_stats(np.array(all_errors), ["x", "y", "z"])
     stats["details"] = gcp_details
+    crs = data.load_gcp_coordinate_system()
+    if crs:
+        stats["coordinate_system"] = crs
     return stats
 
 
@@ -539,6 +555,17 @@ def cameras_statistics(
     for camera_id in data.load_camera_models():
         if "optimized_values" not in stats[camera_id]:
             del stats[camera_id]
+        else:
+            # Compute relative difference (%) between initial and optimized
+            initial = stats[camera_id]["initial_values"]
+            optimized = stats[camera_id]["optimized_values"]
+            rel_diff = {}
+            for param, init_val in initial.items():
+                if abs(init_val) > 1e-12:
+                    rel_diff[param] = abs(optimized[param] - init_val) / abs(init_val) * 100.0
+                else:
+                    rel_diff[param] = 0.0
+            stats[camera_id]["relative_difference"] = rel_diff
 
     return stats
 
