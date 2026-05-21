@@ -19,10 +19,25 @@ from matplotlib.patches import Patch
 
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import feature_loader, geo, geometry, io, multiview, pygeometry, pymap, types
+from opensfm import feature_loader, geo, geometry, report, io, multiview, pygeometry, pymap, types
 from opensfm.dataset import DataSet, DataSetBase
 
 RESIDUAL_PIXEL_CUTOFF = 4
+
+_CLR_ACCENT = (0.02, 0.80, 0.39)                            # #05CB63 — Mapillary green
+_CLR_BAD = np.array(report.COLOR_GRADE_BAD) / 255.0         # #E05252 — muted red
+_CLR_AVG = np.array(report.COLOR_GRADE_AVG) / 255.0         # #D4A843 — warm amber
+_CLR_GOOD = np.array(report.COLOR_GRADE_GOOD) / 255.0       # #3CB371 — medium sea-green
+
+_REPORT_SEQ_CMAP = colors.LinearSegmentedColormap.from_list(
+    "opensfm_seq",
+    [_CLR_BAD, _CLR_AVG, _CLR_GOOD],
+)
+
+_REPORT_SEQ_CMAP_INV = colors.LinearSegmentedColormap.from_list(
+    "opensfm_quality",
+    [_CLR_GOOD, _CLR_AVG, _CLR_BAD],
+)
 
 
 def _norm2d(point: NDArray) -> float:
@@ -682,7 +697,7 @@ def save_matchgraph(
         all_shots, all_points)
     all_values = connectivity.values()
     lowest = np.percentile(list(all_values), 5)
-    highest = np.percentile(list(all_values), 95)
+    highest = np.percentile(list(all_values), 75)
 
     min_matches: int = 2 * data.config["resection_min_inliers"]
     edges_json: List[Dict[str, Any]] = []
@@ -701,7 +716,7 @@ def save_matchgraph(
         io.json_dump(matchgraph_data, fjson)
 
     plt.clf()
-    cmap = cm.viridis
+    cmap = _REPORT_SEQ_CMAP
     for (node1, node2), edge in sorted(connectivity.items(), key=lambda x: x[1]):
         if edge < min_matches:
             continue
@@ -711,7 +726,7 @@ def save_matchgraph(
             continue
         o1 = reconstructions[comp1].shots[node1].pose.get_origin()
         o2 = reconstructions[comp2].shots[node2].pose.get_origin()
-        c = max(0, min(1.0, 1 - (float(edge) - lowest) / (highest - lowest)))
+        c = max(0, min(1.0, (float(edge) - lowest) / (highest - lowest)))
         plt.plot([o1[0], o2[0]], [o1[1], o2[1]], linestyle="-", color=cmap(c))
 
     for i, rec in enumerate(reconstructions):
@@ -727,7 +742,7 @@ def save_matchgraph(
         ax.spines[b].set_visible(False)
 
     norm = colors.Normalize(vmin=lowest, vmax=highest)
-    sm = cm.ScalarMappable(norm=norm, cmap=cmap.reversed())
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     plt.colorbar(
         sm,
@@ -758,8 +773,9 @@ def save_residual_histogram(
     ]
     n, _, p_norm = axs[0].hist(b_norm[:-1], b_norm, weights=h_norm)
     n = n.astype("int")
+    seq_cmap = _REPORT_SEQ_CMAP
     for i in range(len(p_norm)):
-        p_norm[i].set_facecolor(plt.cm.viridis(n[i] / max(n)))
+        p_norm[i].set_facecolor(seq_cmap(n[i] / max(n)))
 
     h_pixel, b_pixel = stats["reconstruction_statistics"][
         "reprojection_histogram_pixels"
@@ -767,7 +783,7 @@ def save_residual_histogram(
     n, _, p_pixel = axs[1].hist(b_pixel[:-1], b_pixel, weights=h_pixel)
     n = n.astype("int")
     for i in range(len(p_pixel)):
-        p_pixel[i].set_facecolor(plt.cm.viridis(n[i] / max(n)))
+        p_pixel[i].set_facecolor(seq_cmap(n[i] / max(n)))
 
     h_angular, b_angular = stats["reconstruction_statistics"][
         "reprojection_histogram_angular"
@@ -781,7 +797,7 @@ def save_residual_histogram(
     ].hist(b_angular[:-1], b_angular, weights=h_angular)
     n = n.astype("int")
     for i in range(len(p_angular)):
-        p_angular[i].set_facecolor(plt.cm.viridis(n[i] / max(n)))
+        p_angular[i].set_facecolor(seq_cmap(n[i] / max(n)))
 
     axs[0].set_title("Normalized Residual")
     axs[1].set_title("Pixel Residual")
@@ -899,8 +915,8 @@ def save_topview(
         sorted_shots = sorted(
             rec.shots.values(), key=lambda x: x.metadata.capture_time.value
         )
-        c_camera = cm.cool(0 / len(reconstructions))
-        c_gps = cm.autumn(0 / len(reconstructions))
+        c_camera = _CLR_ACCENT
+        c_gps = _CLR_BAD
         for j, shot in enumerate(sorted_shots):
             o = shot.pose.get_origin()
             x, y = (
@@ -1030,7 +1046,10 @@ def save_heatmap(
         lowest = np.min(camera_heatmap)
 
         plt.clf()
-        plt.imshow((camera_heatmap - lowest) / (highest - lowest) * 255)
+        plt.imshow(
+            (camera_heatmap - lowest) / (highest - lowest),
+            cmap=_REPORT_SEQ_CMAP,
+        )
 
         plt.title(
             f"Detected features heatmap for camera {camera_id}",
@@ -1154,7 +1173,7 @@ def save_residual_grids(
             scale_units="xy",
             scale=1,
             width=0.1,
-            cmap="viridis_r",
+            cmap=_REPORT_SEQ_CMAP_INV,
         )
 
         scale = highest - lowest
@@ -1172,7 +1191,7 @@ def save_residual_grids(
         )
 
         norm = colors.Normalize(vmin=lowest, vmax=highest)
-        cmap = cm.viridis_r
+        cmap = _REPORT_SEQ_CMAP_INV
         sm = cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         plt.colorbar(
@@ -1559,23 +1578,18 @@ def save_overlap_map(
 
     counts_2d = counts.reshape(ny, nx)
 
-    # Color map: 0=white, 1=light grey, 2=red, 3=yellow, 4=green, 5+=blue
-    rgba = np.ones((ny, nx, 4), dtype=np.float32)  # white with full alpha
-    # 1 views: red
-    mask2 = counts_2d == 1
-    rgba[mask2] = [0.86, 0.21, 0.27, 1.0]
-    # 2 views: yellow/amber
-    mask3 = counts_2d == 2
-    rgba[mask3] = [0.96, 0.62, 0.04, 1.0]
-    # 3 views: light green
-    mask4 = counts_2d == 3
-    rgba[mask4] = [0.10, 0.72, 0.34, 1.0]
-    # 4 views: green
-    mask5 = counts_2d == 4
-    rgba[mask5] = [0.00, 0.62, 0.52, 1.0]
-    # 5 views: blue
-    mask5 = counts_2d >= 5
-    rgba[mask5] = [0.12, 0.46, 0.70, 1.0]
+    # Color map using the unified palette
+    rgba = np.ones((ny, nx, 4), dtype=np.float32)  # white = no coverage
+    # 1 view: light grey (insufficient)
+    rgba[counts_2d == 1] = [0.78, 0.78, 0.78, 1.0]
+    # 2 views: bad (muted red)
+    rgba[counts_2d == 2] = [*_CLR_BAD, 1.0]
+    # 3 views: average (warm amber)
+    rgba[counts_2d == 3] = [*_CLR_AVG, 1.0]
+    # 4 views: good (medium sea-green)
+    rgba[counts_2d == 4] = [*_CLR_GOOD, 1.0]
+    # 5+ views: accent (Mapillary green)
+    rgba[counts_2d >= 5] = [*_CLR_ACCENT, 1.0]
 
     # Create figure with legend
     fig, ax = plt.subplots(1, 1, figsize=(10, 10 * ny / nx))
@@ -1587,11 +1601,11 @@ def save_overlap_map(
     # Legend
 
     legend_elements = [
-        Patch(facecolor=(0.86, 0.21, 0.27), label="1 views"),
-        Patch(facecolor=(0.96, 0.62, 0.04), label="2 views"),
-        Patch(facecolor=(0.10, 0.72, 0.34), label="3 views"),
-        Patch(facecolor=(0.00, 0.62, 0.52), label="4 views"),
-        Patch(facecolor=(0.12, 0.46, 0.70), label="5+ views"),
+        Patch(facecolor=(0.78, 0.78, 0.78), label="1 view"),
+        Patch(facecolor=_CLR_BAD, label="2 views"),
+        Patch(facecolor=_CLR_AVG, label="3 views"),
+        Patch(facecolor=_CLR_GOOD, label="4 views"),
+        Patch(facecolor=_CLR_ACCENT, label="5+ views"),
     ]
     ax.legend(handles=legend_elements, loc="upper right", framealpha=0.9)
 

@@ -25,7 +25,7 @@ COLOR_EDITOR: Tuple[int, int, int] = (30, 30, 30)               # #1E1E1E — he
 COLOR_SPLIT: Tuple[int, int, int] = (62, 62, 62)                # #3E3E3E — borders/rules
 COLOR_TEXT: Tuple[int, int, int] = (44, 44, 46)                  # Near-black body text
 COLOR_TEXT_SECONDARY: Tuple[int, int, int] = (108, 117, 125)    # Muted secondary
-COLOR_ACCENT: Tuple[int, int, int] = (0, 184, 87)               # Vibrant green (tuned for white bg)
+COLOR_ACCENT: Tuple[int, int, int] = (5, 203, 99)               # #05CB63 — Mapillary Green
 COLOR_ACCENT_FAINT: Tuple[int, int, int] = (232, 250, 240)      # Very subtle green tint
 COLOR_TABLE_HEADER: Tuple[int, int, int] = (42, 45, 52)         # Slate-dark header
 COLOR_TABLE_HEADER_TEXT: Tuple[int, int, int] = (255, 255, 255)  # White on dark
@@ -35,10 +35,10 @@ COLOR_TABLE_LABEL: Tuple[int, int, int] = (242, 244, 247)       # Neutral light 
 COLOR_TABLE_BORDER: Tuple[int, int, int] = (228, 231, 236)      # Subtle border
 COLOR_FOOTER: Tuple[int, int, int] = (51, 51, 51)               # #333333
 
-# Quality grading colors
-COLOR_GRADE_GOOD: Tuple[int, int, int] = (0, 184, 87)           # Green (matches accent)
-COLOR_GRADE_AVG: Tuple[int, int, int] = (245, 158, 11)          # Warm amber
-COLOR_GRADE_BAD: Tuple[int, int, int] = (220, 53, 69)           # Bootstrap-red
+# Quality grading colors — matching the application QML palette
+COLOR_GRADE_GOOD: Tuple[int, int, int] = (60, 179, 113)         # #3CB371 — medium sea-green
+COLOR_GRADE_AVG: Tuple[int, int, int] = (212, 168, 67)          # #D4A843 — warm amber
+COLOR_GRADE_BAD: Tuple[int, int, int] = (224, 82, 82)           # #E05252 — muted red
 
 # Typography sizes (pt)
 FONT_TITLE: int = 22
