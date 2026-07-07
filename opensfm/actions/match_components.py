@@ -26,7 +26,9 @@ def run_dataset(data: DataSetBase) -> None:
 
     if len(components) <= 1:
         logger.info("Matching graph already connected, nothing to do")
-        write_report(data, components, components, [], 0, {}, timer() - start)
+        write_report(
+            data, components, components, [], 0, _empty_selection_stats(), timer() - start
+        )
         return
 
     pairs, selection_stats = select_cross_component_pairs(
@@ -105,11 +107,7 @@ def select_cross_component_pairs(
     """
     histograms: Dict[str, NDArray] = {}
     pairs: Set[Tuple[str, str]] = set()
-    stats = {
-        "exhaustive_component_pairs": 0,
-        "vlad_component_pairs": 0,
-        "fallback_component_pairs": 0,
-    }
+    stats = _empty_selection_stats()
 
     for comp_a, comp_b in combinations(components, 2):
         if len(comp_a) * len(comp_b) <= exhaustive_cap:
@@ -132,6 +130,14 @@ def select_cross_component_pairs(
             stats["fallback_component_pairs"] += 1
 
     return pairs, stats
+
+
+def _empty_selection_stats() -> Dict[str, int]:
+    return {
+        "exhaustive_component_pairs": 0,
+        "vlad_component_pairs": 0,
+        "fallback_component_pairs": 0,
+    }
 
 
 def _exhaustive_pairs(
@@ -204,6 +210,7 @@ def write_report(
     selection_stats: Dict[str, int],
     wall_time: float,
 ) -> None:
+    """Save the component counts and matched pairs to the report folder."""
     report: Dict[str, Any] = {
         "wall_time": wall_time,
         "num_components_before": len(components_before),

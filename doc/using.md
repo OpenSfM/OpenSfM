@@ -13,6 +13,7 @@ positional arguments:
     extract_metadata     Extract metadata from images' EXIF tags
     detect_features      Compute features for all images
     match_features       Match features between image pairs
+    match_components     Match features across disconnected components of the matching graph
     create_rig           Create rig cameras and assignments
     create_tracks        Link pairwise matches into tracks
     convert_gcp          Convert GCPs between gcp_list.txt and JSON
@@ -168,6 +169,12 @@ Matches feature points between images and stores results in the `matches/` folde
 Matching can be restricted (and sped up) by GPS distance, capture time, or file name order.
 
 Key config: `matching_gps_distance`, `matching_gps_neighbors`, `matching_time_neighbors`, `matching_order_neighbors`, `lowes_ratio`, `matcher_type`. See [configuration](configuration.md#pair-selection).
+
+### `match_components`
+
+Optional pass after `match_features` for GPS-denied or no-GPS captures, where pair selection can leave the matching graph split into disconnected components (which `reconstruct` turns into separate partial reconstructions). Detects the components and matches image pairs across them: exhaustively when a component pair has few candidate pairs, otherwise pruned by VLAD image similarity. Results are merged into the `matches/` folder, so `create_tracks` bridges the components. Writes `reports/match_components.json` with component counts before/after.
+
+Key config: `matching_components_exhaustive_cap`, `matching_components_vlad_neighbors`, `robust_matching_min_match`.
 
 ### `create_rig`
 
