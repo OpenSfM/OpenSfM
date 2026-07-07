@@ -25,6 +25,7 @@ class FakeMatchesDataSet:
             "robust_matching_min_match": 20,
             "matching_components_exhaustive_cap": 100,
             "matching_components_vlad_neighbors": 5,
+            "processes": 1,
         }
         self.reports: Dict[str, str] = {}
         self.saved_calls: List[str] = []
@@ -89,7 +90,7 @@ def test_select_pairs_exhaustive_below_cap() -> None:
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"a", "b", "c"}, {"d", "e"}]
     pairs, stats = match_components.select_cross_component_pairs(
-        data, {}, components, exhaustive_cap=100, vlad_neighbors=5
+        data, components, exhaustive_cap=100, vlad_neighbors=5
     )
     expected = {
         ("a", "d"), ("a", "e"), ("b", "d"),
@@ -103,9 +104,7 @@ def test_select_pairs_exhaustive_below_cap() -> None:
     }
 
 
-def test_select_pairs_vlad_above_cap() -> None:
-    data = FakeMatchesDataSet([], {})
-    components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
+def test_select_pairs_vlad_above_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     histograms: Dict[str, NDArray] = {
         "a": np.array([0.0], dtype=np.float32),
         "b": np.array([10.0], dtype=np.float32),
@@ -113,13 +112,15 @@ def test_select_pairs_vlad_above_cap() -> None:
         "d": np.array([10.1], dtype=np.float32),
         "e": np.array([50.0], dtype=np.float32),
     }
+    monkeypatch.setattr(
+        match_components.pairs_selection,
+        "vlad_histograms",
+        lambda imgs, data: {im: histograms[im] for im in imgs},
+    )
+    data = FakeMatchesDataSet([], {})
+    components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
     pairs, stats = match_components.select_cross_component_pairs(
-        data,
-        {},
-        components,
-        exhaustive_cap=1,
-        vlad_neighbors=1,
-        histograms=histograms,
+        data, components, exhaustive_cap=1, vlad_neighbors=1
     )
     assert pairs == {("a", "c"), ("b", "d")}
     assert stats["vlad_component_pairs"] == 1
@@ -130,22 +131,23 @@ def test_select_pairs_vlad_above_cap() -> None:
 def test_select_pairs_fallback_when_vlad_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def _raise(imgs: Set[str], data: Any) -> Dict[str, NDArray]:
+        raise FileNotFoundError("no VLAD words")
+
     monkeypatch.setattr(
-        match_components.pairs_selection,
-        "vlad_histograms",
-        lambda imgs, data: {},
+        match_components.pairs_selection, "vlad_histograms", _raise
     )
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
 
     pairs, stats = match_components.select_cross_component_pairs(
-        data, {}, components, exhaustive_cap=2, vlad_neighbors=1
+        data, components, exhaustive_cap=2, vlad_neighbors=1
     )
     assert stats["fallback_component_pairs"] == 1
     assert len(pairs) == 2
 
     pairs_again, _ = match_components.select_cross_component_pairs(
-        data, {}, components, exhaustive_cap=2, vlad_neighbors=1
+        data, components, exhaustive_cap=2, vlad_neighbors=1
     )
     assert pairs == pairs_again
 
