@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from timeit import default_timer as timer
 from collections import defaultdict
-from typing import Any, Dict, Generator, List, Optional, Set, Sized, Tuple
+from typing import Any, Dict, Generator, List, Optional, Sized, Tuple
 
 import cv2
 import numpy as np
@@ -250,26 +250,31 @@ def save_matches_merging(
 ) -> None:
     """Merge new pairwise matches into the existing per-image match files.
 
-    Unlike save_matches, which rewrites whole per-image files, existing
-    matches are loaded first and updated. Matches of a pair can be stored
-    under either image (see DataSet.find_matches), so a stale entry in the
-    reverse orientation is dropped to keep a single set per pair.
+    Existing matches are never modified or removed: a pair already stored in
+    either orientation (see DataSet.find_matches) keeps its original matches
+    and the new ones are dropped. Only brand-new pairs are added.
     """
     new_per_image: Dict[str, Dict[str, NDArray]] = defaultdict(dict)
-    stale_per_image: Dict[str, Set[str]] = defaultdict(set)
     for (im1, im2), m in matched_pairs.items():
         new_per_image[im1][im2] = np.asarray(m, dtype=np.int32).reshape(-1, 2)
-        stale_per_image[im2].add(im1)
 
-    for im in sorted(set(new_per_image) | set(stale_per_image)):
-        new_matches = new_per_image.get(im, {})
-        stale = stale_per_image.get(im, set()).difference(new_matches)
-        existing = data.load_matches(im) if data.matches_exists(im) else {}
-        if not new_matches and not any(im2 in existing for im2 in stale):
-            continue
-        merged = {im2: m for im2, m in existing.items() if im2 not in stale}
-        merged.update(new_matches)
-        data.save_matches(im, merged)
+    loaded: Dict[str, Dict[str, NDArray]] = {}
+
+    def _load(im: str) -> Dict[str, NDArray]:
+        if im not in loaded:
+            loaded[im] = data.load_matches(im) if data.matches_exists(im) else {}
+        return loaded[im]
+
+    for im1 in sorted(new_per_image):
+        im1_matches = _load(im1)
+        added = False
+        for im2, m in new_per_image[im1].items():
+            if im2 in im1_matches or im1 in _load(im2):
+                continue
+            im1_matches[im2] = m
+            added = True
+        if added:
+            data.save_matches(im1, im1_matches)
 
 
 def match_arguments(
