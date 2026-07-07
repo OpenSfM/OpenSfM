@@ -197,13 +197,12 @@ def test_merge_save_new_image_without_existing_file() -> None:
     assert set(data.matches["q"].keys()) == {"r"}
 
 
-def test_merge_save_drops_stale_reverse_orientation() -> None:
-    data = FakeMatchesDataSet(
-        ["a", "b"], {"b": {"a": _m(5), "c": _m(25)}}
-    )
+def test_merge_save_never_touches_existing() -> None:
+    data = FakeMatchesDataSet(["a", "b"], {"b": {"a": _m(5), "c": _m(25)}})
     matching.save_matches_merging(data, {("a", "b"): [(0, 1)]})
-    assert set(data.matches["a"].keys()) == {"b"}
-    assert set(data.matches["b"].keys()) == {"c"}
+    assert "a" not in data.matches
+    assert set(data.matches["b"].keys()) == {"a", "c"}
+    assert len(data.matches["b"]["a"]) == 5
 
 
 # --- run_dataset tests ---
