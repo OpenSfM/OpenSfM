@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Set, Tuple
 import numpy as np
 import pytest
 from numpy.typing import NDArray
-from opensfm import matching
-from opensfm.actions import match_components
+from opensfm import matching, tracking
+from opensfm.actions import match_components, match_features
 from opensfm.synthetic_data import synthetic_dataset, synthetic_scene
 
 
@@ -14,7 +14,8 @@ def _m(n: int) -> NDArray:
 
 
 class FakeMatchesDataSet:
-    """Minimal stand-in exposing only the matches API used by the action."""
+    """Minimal stand-in exposing only the matches API used by the matching
+    graph code."""
 
     def __init__(
         self, images: List[str], matches: Dict[str, Dict[str, NDArray]]
@@ -25,6 +26,7 @@ class FakeMatchesDataSet:
             "robust_matching_min_match": 20,
             "matching_components_exhaustive_cap": 100,
             "matching_components_vlad_neighbors": 5,
+            "matching_merge_components": False,
             "processes": 1,
         }
         self.reports: Dict[str, str] = {}
@@ -46,7 +48,7 @@ class FakeMatchesDataSet:
         self.matches[image] = matches
 
     def load_exif(self, image: str) -> Dict[str, Any]:
-        raise AssertionError("load_exif should not be called on early exit")
+        return {}
 
     def save_report(self, content: str, path: str) -> None:
         self.reports[path] = content
@@ -56,34 +58,32 @@ class FakeMatchesDataSet:
 
 
 def test_build_match_graph_thresholds_edges() -> None:
-    data = FakeMatchesDataSet(
-        ["a", "b", "c"], {"a": {"b": _m(25), "c": _m(5)}}
+    graph = matching.build_match_graph(
+        ["a", "b", "c"], {("a", "b"): _m(25), ("a", "c"): _m(5)}, 20
     )
-    graph = match_components.build_match_graph(data, data.images(), 20)
     assert graph.number_of_nodes() == 3
     assert graph.has_edge("a", "b")
     assert not graph.has_edge("a", "c")
 
 
-def test_build_match_graph_no_match_files() -> None:
-    data = FakeMatchesDataSet(["a", "b", "c"], {})
-    graph = match_components.build_match_graph(data, data.images(), 20)
+def test_build_match_graph_no_matches() -> None:
+    graph = matching.build_match_graph(["a", "b", "c"], {}, 20)
     assert graph.number_of_nodes() == 3
     assert graph.number_of_edges() == 0
-    assert len(match_components.image_components(graph)) == 3
+    assert len(matching.image_components(graph)) == 3
 
 
 def test_image_components_sorted_largest_first() -> None:
-    data = FakeMatchesDataSet(
+    graph = matching.build_match_graph(
         ["a", "b", "c", "d", "e"],
-        {"a": {"b": _m(25), "c": _m(25)}, "d": {"e": _m(25)}},
+        {("a", "b"): _m(25), ("a", "c"): _m(25), ("d", "e"): _m(25)},
+        20,
     )
-    graph = match_components.build_match_graph(data, data.images(), 20)
-    components = match_components.image_components(graph)
+    components = matching.image_components(graph)
     assert components == [{"a", "b", "c"}, {"d", "e"}]
 
 
-# --- Unit tests: select_cross_component_pairs ---
+# --- Unit tests: _select_cross_component_pairs ---
 
 
 CandidateCall = Tuple[List[str], List[str], Dict[str, Any]]
@@ -106,7 +106,7 @@ def _fake_candidates(
         return [(r, c) for r in ref for c in cand], {}
 
     monkeypatch.setattr(
-        match_components.pairs_selection, "match_candidates_from_metadata", fake
+        matching.pairs_selection, "match_candidates_from_metadata", fake
     )
 
 
@@ -116,7 +116,7 @@ def test_select_pairs_exhaustive_below_cap(monkeypatch: pytest.MonkeyPatch) -> N
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"a", "b", "c"}, {"d", "e"}]
 
-    pairs, stats = match_components.select_cross_component_pairs(
+    pairs, stats = matching._select_cross_component_pairs(
         data, {}, components, exhaustive_cap=100, vlad_neighbors=5
     )
 
@@ -144,7 +144,7 @@ def test_select_pairs_vlad_above_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
 
-    _, stats = match_components.select_cross_component_pairs(
+    _, stats = matching._select_cross_component_pairs(
         data, {}, components, exhaustive_cap=1, vlad_neighbors=7
     )
 
@@ -166,12 +166,12 @@ def test_select_pairs_skips_when_vlad_unavailable(
         raise FileNotFoundError("no VLAD words")
 
     monkeypatch.setattr(
-        match_components.pairs_selection, "match_candidates_from_metadata", _raise
+        matching.pairs_selection, "match_candidates_from_metadata", _raise
     )
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
 
-    pairs, stats = match_components.select_cross_component_pairs(
+    pairs, stats = matching._select_cross_component_pairs(
         data, {}, components, exhaustive_cap=2, vlad_neighbors=1
     )
 
@@ -215,14 +215,138 @@ def test_merge_save_never_touches_existing() -> None:
     assert len(data.matches["b"]["a"]) == 5
 
 
-# --- run_dataset tests ---
+# --- Unit tests: bridge_matching_components ---
+
+
+def test_bridge_early_exit_single_component() -> None:
+    data = FakeMatchesDataSet(["a", "b", "c"], {})
+    pairs_matches: Dict[Tuple[str, str], List[Tuple[int, int]]] = {
+        ("a", "b"): [(0, 0)] * 25,
+        ("b", "c"): [(0, 0)] * 25,
+    }
+
+    new_matches, report = matching.bridge_matching_components(
+        data, {}, ["a", "b", "c"], pairs_matches
+    )
+
+    assert new_matches == {}
+    assert report["num_components_before"] == 1
+    assert report["num_components_after"] == 1
+    assert report["num_candidate_pairs"] == 0
+
+
+def test_bridge_excludes_attempted_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    pairs_matches: Dict[Tuple[str, str], List[Tuple[int, int]]] = {
+        ("a", "b"): [(0, 0)] * 25,
+        ("c", "a"): [(0, 0)] * 3,  # already attempted, sub-threshold
+    }
+    requested: List[Tuple[str, str]] = []
+
+    def fake_match(
+        data: Any,
+        override: Dict[str, Any],
+        exifs: Dict[str, Any],
+        pairs: List[Tuple[str, str]],
+    ) -> Dict[Tuple[str, str], List[Tuple[int, int]]]:
+        requested.extend(pairs)
+        return {p: [(0, 0)] * 30 for p in pairs}
+
+    def fake_select(
+        data: Any,
+        exifs: Dict[str, Any],
+        components: List[Set[str]],
+        cap: int,
+        k: int,
+    ) -> Tuple[Set[Tuple[str, str]], Dict[str, int]]:
+        return {("a", "c"), ("b", "c")}, matching._empty_selection_stats()
+
+    monkeypatch.setattr(matching, "match_images_with_pairs", fake_match)
+    monkeypatch.setattr(matching, "_select_cross_component_pairs", fake_select)
+    data = FakeMatchesDataSet(["a", "b", "c"], {})
+
+    new_matches, report = matching.bridge_matching_components(
+        data, {}, ["a", "b", "c"], pairs_matches, exifs={}
+    )
+
+    assert requested == [("b", "c")]
+    assert set(new_matches) == {("b", "c")}
+    assert report["num_components_before"] == 2
+    assert report["num_components_after"] == 1
+    assert ("c", "a") in pairs_matches  # input untouched
+
+
+# --- match_features integration of the bridging pass ---
+
+
+def _run_match_features(
+    monkeypatch: pytest.MonkeyPatch, merge_components: bool
+) -> Tuple[Dict[str, Any], Dict[Tuple[str, str], List[Tuple[int, int]]]]:
+    data = FakeMatchesDataSet(["a", "b"], {})
+    data.config["matching_merge_components"] = merge_components
+
+    monkeypatch.setattr(
+        match_features.matching,
+        "match_images",
+        lambda d, o, r, c, exifs=None: ({("a", "b"): [(0, 0)] * 25}, {}),
+    )
+    called: Dict[str, Any] = {}
+
+    def fake_bridge(
+        d: Any,
+        o: Dict[str, Any],
+        images: List[str],
+        pairs_matches: Dict[Tuple[str, str], List[Tuple[int, int]]],
+        exifs: Any = None,
+    ) -> Tuple[Dict[Tuple[str, str], List[Tuple[int, int]]], Dict[str, Any]]:
+        called["exifs"] = exifs
+        return {("a", "z"): [(1, 1)] * 30}, {"num_components_before": 2}
+
+    monkeypatch.setattr(
+        match_features.matching, "bridge_matching_components", fake_bridge
+    )
+    saved: Dict[Tuple[str, str], List[Tuple[int, int]]] = {}
+    monkeypatch.setattr(
+        match_features.matching,
+        "save_matches",
+        lambda d, imgs, pairs_matches: saved.update(pairs_matches),
+    )
+
+    match_features.run_dataset(data)
+    return called, saved
+
+
+def test_match_features_bridges_components_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called, saved = _run_match_features(monkeypatch, merge_components=True)
+    assert called["exifs"] is not None  # EXIFs passed through, not reloaded
+    assert set(saved) == {("a", "b"), ("a", "z")}
+
+
+def test_match_features_no_bridging_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called, saved = _run_match_features(monkeypatch, merge_components=False)
+    assert called == {}
+    assert set(saved) == {("a", "b")}
+
+
+# --- Standalone command tests ---
 
 
 def test_run_dataset_early_exit_single_component() -> None:
     data = FakeMatchesDataSet(
         ["a", "b", "c"], {"a": {"b": _m(25)}, "b": {"c": _m(25)}}
     )
+
+    def _fail(image: str) -> Dict[str, Any]:
+        raise AssertionError("load_exif should not be called on early exit")
+
+    # pyre-fixme[8]: monkeypatch onto the instance.
+    data.load_exif = _fail
+
     match_components.run_dataset(data)
+
     assert data.saved_calls == []
     assert "match_components.json" in data.reports
     report = data.reports["match_components.json"]
@@ -275,12 +399,14 @@ def test_run_dataset_bridges_two_components(
     synthetic.config["matching_components_exhaustive_cap"] = 10_000
 
     min_matches = synthetic.config["robust_matching_min_match"]
-    before = match_components.image_components(
-        match_components.build_match_graph(synthetic, images, min_matches)
+    before = matching.image_components(
+        matching.build_match_graph(
+            images, dict(tracking.load_matches(synthetic, images)), min_matches
+        )
     )
     assert len(before) == 2
 
-    # Snapshot existing matches to verify non-destruction.
+    # Snapshot existing matches to verify they are untouched.
     existing_snapshot = {
         im: {other: arr.copy() for other, arr in m.items()}
         for im, m in store.items()
@@ -288,17 +414,19 @@ def test_run_dataset_bridges_two_components(
 
     match_components.run_dataset(synthetic)
 
-    after = match_components.image_components(
-        match_components.build_match_graph(synthetic, images, min_matches)
+    after = matching.image_components(
+        matching.build_match_graph(
+            images, dict(tracking.load_matches(synthetic, images)), min_matches
+        )
     )
     assert len(after) == 1
 
     for im, m in existing_snapshot.items():
         for other, arr in m.items():
-            assert other in store[im]
             assert np.array_equal(store[im][other], arr)
 
     assert "match_components.json" in reports
+    assert '"num_components_before": 2' in reports["match_components.json"]
 
 
 def test_command_registered() -> None:
