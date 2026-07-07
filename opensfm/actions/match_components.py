@@ -182,15 +182,23 @@ def _vlad_pairs(
 def _subsampled_pairs(
     comp_a: Set[str], comp_b: Set[str], cap: int
 ) -> Set[Tuple[str, str]]:
-    """Deterministic even-stride subsampling of all cross pairs down to cap
-    pairs."""
-    all_pairs = sorted(
-        pairs_selection.sorted_pair(a, b) for a in comp_a for b in comp_b
-    )
-    if len(all_pairs) <= cap:
-        return set(all_pairs)
-    stride = len(all_pairs) / float(cap)
-    return {all_pairs[int(i * stride)] for i in range(cap)}
+    """Deterministic even-stride subsampling of the cross pairs down to cap
+    pairs, without materializing the full cross product."""
+    if cap <= 0:
+        return set()
+    images_a = sorted(comp_a)
+    images_b = sorted(comp_b)
+    total = len(images_a) * len(images_b)
+    if total <= cap:
+        return {
+            pairs_selection.sorted_pair(a, b) for a in images_a for b in images_b
+        }
+    return {
+        pairs_selection.sorted_pair(
+            images_a[index // len(images_b)], images_b[index % len(images_b)]
+        )
+        for index in (i * total // cap for i in range(cap))
+    }
 
 
 def merge_and_save_matches(

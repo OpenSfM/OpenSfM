@@ -163,6 +163,10 @@ def test_subsampled_pairs_capped_and_deterministic() -> None:
     assert len(full) == 9
 
 
+def test_subsampled_pairs_zero_cap() -> None:
+    assert match_components._subsampled_pairs({"a", "b"}, {"c", "d"}, 0) == set()
+
+
 # --- Unit tests: merge_and_save_matches ---
 
 
