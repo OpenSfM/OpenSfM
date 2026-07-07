@@ -205,6 +205,8 @@ class OpenSfMConfig:
     matching_components_exhaustive_cap: int = 100
     # Number of most similar images (by VLAD distance) each image of the smaller component is paired with in the other component, when above the exhaustive cap
     matching_components_vlad_neighbors: int = 5
+    # Run an extra pass at the end of match_features that matches features across disconnected components of the matching graph
+    matching_merge_components: bool = False
 
     ##################################
     # Params for geometric estimation
