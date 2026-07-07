@@ -8,7 +8,8 @@ import glob
 from concurrent.futures import ThreadPoolExecutor
 
 from timeit import default_timer as timer
-from typing import Any, Dict, Generator, List, Optional, Sized, Tuple
+from collections import defaultdict
+from typing import Any, Dict, Generator, List, Optional, Set, Sized, Tuple
 
 import cv2
 import numpy as np
@@ -241,6 +242,34 @@ def save_matches(
 
     for im1, im1_matches in matches_per_im1.items():
         data.save_matches(im1, im1_matches)
+
+
+def save_matches_merging(
+    data: DataSetBase,
+    matched_pairs: Dict[Tuple[str, str], List[Tuple[int, int]]],
+) -> None:
+    """Merge new pairwise matches into the existing per-image match files.
+
+    Unlike save_matches, which rewrites whole per-image files, existing
+    matches are loaded first and updated. Matches of a pair can be stored
+    under either image (see DataSet.find_matches), so a stale entry in the
+    reverse orientation is dropped to keep a single set per pair.
+    """
+    new_per_image: Dict[str, Dict[str, NDArray]] = defaultdict(dict)
+    stale_per_image: Dict[str, Set[str]] = defaultdict(set)
+    for (im1, im2), m in matched_pairs.items():
+        new_per_image[im1][im2] = np.asarray(m, dtype=np.int32).reshape(-1, 2)
+        stale_per_image[im2].add(im1)
+
+    for im in sorted(set(new_per_image) | set(stale_per_image)):
+        new_matches = new_per_image.get(im, {})
+        stale = stale_per_image.get(im, set()).difference(new_matches)
+        existing = data.load_matches(im) if data.matches_exists(im) else {}
+        if not new_matches and not any(im2 in existing for im2 in stale):
+            continue
+        merged = {im2: m for im2, m in existing.items() if im2 not in stale}
+        merged.update(new_matches)
+        data.save_matches(im, merged)
 
 
 def match_arguments(

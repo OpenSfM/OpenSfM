@@ -1,12 +1,10 @@
 # pyre-strict
 import logging
-from collections import defaultdict
 from itertools import combinations
 from timeit import default_timer as timer
 from typing import Any, Dict, List, Set, Tuple
 
 import networkx as nx
-import numpy as np
 from numpy.typing import NDArray
 from opensfm import geo, io, matching, pairs_selection, tracking
 from opensfm.dataset_base import DataSetBase
@@ -43,7 +41,7 @@ def run_dataset(data: DataSetBase) -> None:
     if pairs_list:
         exifs = {im: data.load_exif(im) for p in pairs_list for im in p}
         matched = matching.match_images_with_pairs(data, {}, exifs, pairs_list)
-        merge_and_save_matches(data, matched)
+        matching.save_matches_merging(data, matched)
         matching.clear_cache()
         num_matched_pairs = sum(1 for m in matched.values() if len(m) >= min_matches)
         # The saved graph gained exactly the matched pairs above the
@@ -195,26 +193,6 @@ def _subsampled_pairs(
         )
         for index in (i * total // cap for i in range(cap))
     }
-
-
-def merge_and_save_matches(
-    data: DataSetBase,
-    matched_pairs: Dict[Tuple[str, str], List[Tuple[int, int]]],
-) -> None:
-    """Merge new pairwise matches into the existing per-image match files.
-
-    DataSet.save_matches overwrites the whole per-image file, so existing
-    matches are loaded first and updated.
-    """
-    per_im1: Dict[str, Dict[str, NDArray]] = defaultdict(dict)
-    for (im1, im2), m in matched_pairs.items():
-        per_im1[im1][im2] = np.asarray(m, dtype=np.int32).reshape(-1, 2)
-    for im1, new_matches in per_im1.items():
-        existing: Dict[str, NDArray] = (
-            data.load_matches(im1) if data.matches_exists(im1) else {}
-        )
-        existing.update(new_matches)
-        data.save_matches(im1, existing)
 
 
 def write_report(

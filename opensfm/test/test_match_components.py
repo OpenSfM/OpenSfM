@@ -169,32 +169,41 @@ def test_subsampled_pairs_zero_cap() -> None:
     assert match_components._subsampled_pairs({"a", "b"}, {"c", "d"}, 0) == set()
 
 
-# --- Unit tests: merge_and_save_matches ---
+# --- Unit tests: matching.save_matches_merging ---
 
 
 def test_merge_save_preserves_existing_matches() -> None:
     data = FakeMatchesDataSet(["a"], {"a": {"b": _m(25)}})
-    match_components.merge_and_save_matches(data, {("a", "z"): [(0, 1), (2, 3)]})
+    matching.save_matches_merging(data, {("a", "z"): [(0, 1), (2, 3)]})
     assert set(data.matches["a"].keys()) == {"b", "z"}
     assert len(data.matches["a"]["b"]) == 25
 
 
 def test_merge_save_converts_lists_to_ndarray() -> None:
     data = FakeMatchesDataSet(["a"], {"a": {"b": _m(25)}})
-    match_components.merge_and_save_matches(data, {("a", "z"): [(0, 1), (2, 3)]})
+    matching.save_matches_merging(data, {("a", "z"): [(0, 1), (2, 3)]})
     saved = data.matches["a"]["z"]
     assert isinstance(saved, np.ndarray)
     assert saved.shape == (2, 2)
 
     data_empty = FakeMatchesDataSet(["a"], {"a": {}})
-    match_components.merge_and_save_matches(data_empty, {("a", "z"): []})
+    matching.save_matches_merging(data_empty, {("a", "z"): []})
     assert data_empty.matches["a"]["z"].shape == (0, 2)
 
 
 def test_merge_save_new_image_without_existing_file() -> None:
     data = FakeMatchesDataSet(["a"], {"a": {"b": _m(25)}})
-    match_components.merge_and_save_matches(data, {("q", "r"): [(1, 1)]})
+    matching.save_matches_merging(data, {("q", "r"): [(1, 1)]})
     assert set(data.matches["q"].keys()) == {"r"}
+
+
+def test_merge_save_drops_stale_reverse_orientation() -> None:
+    data = FakeMatchesDataSet(
+        ["a", "b"], {"b": {"a": _m(5), "c": _m(25)}}
+    )
+    matching.save_matches_merging(data, {("a", "b"): [(0, 1)]})
+    assert set(data.matches["a"].keys()) == {"b"}
+    assert set(data.matches["b"].keys()) == {"c"}
 
 
 # --- run_dataset tests ---
@@ -252,13 +261,7 @@ def test_run_dataset_bridges_two_components(
     }
     for half in (half_a, half_b):
         pairs_matches, _ = matching.match_images(synthetic, override, half, half)
-        matched_per_im1: Dict[str, Dict[str, NDArray]] = {}
-        for (im1, im2), m in pairs_matches.items():
-            matched_per_im1.setdefault(im1, {})[im2] = np.asarray(
-                m, dtype=np.int32
-            ).reshape(-1, 2)
-        for im1, m in matched_per_im1.items():
-            store[im1] = m
+        matching.save_matches_merging(synthetic, pairs_matches)
 
     synthetic.config["matching_components_exhaustive_cap"] = 10_000
 
