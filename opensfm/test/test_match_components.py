@@ -86,12 +86,40 @@ def test_image_components_sorted_largest_first() -> None:
 # --- Unit tests: select_cross_component_pairs ---
 
 
-def test_select_pairs_exhaustive_below_cap() -> None:
+CandidateCall = Tuple[List[str], List[str], Dict[str, Any]]
+
+
+def _fake_candidates(
+    monkeypatch: pytest.MonkeyPatch, calls: List[CandidateCall]
+) -> None:
+    """Replace pairs_selection.match_candidates_from_metadata with a fake
+    returning all ref x cand pairs and recording its arguments."""
+
+    def fake(
+        ref: List[str],
+        cand: List[str],
+        exifs: Dict[str, Any],
+        data: Any,
+        override: Dict[str, Any],
+    ) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
+        calls.append((list(ref), list(cand), dict(override)))
+        return [(r, c) for r in ref for c in cand], {}
+
+    monkeypatch.setattr(
+        match_components.pairs_selection, "match_candidates_from_metadata", fake
+    )
+
+
+def test_select_pairs_exhaustive_below_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: List[CandidateCall] = []
+    _fake_candidates(monkeypatch, calls)
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"a", "b", "c"}, {"d", "e"}]
+
     pairs, stats = match_components.select_cross_component_pairs(
-        data, components, exhaustive_cap=100, vlad_neighbors=5
+        data, {}, components, exhaustive_cap=100, vlad_neighbors=5
     )
+
     expected = {
         ("a", "d"), ("a", "e"), ("b", "d"),
         ("b", "e"), ("c", "d"), ("c", "e"),
@@ -100,73 +128,55 @@ def test_select_pairs_exhaustive_below_cap() -> None:
     assert stats == {
         "exhaustive_component_pairs": 1,
         "vlad_component_pairs": 0,
-        "fallback_component_pairs": 0,
+        "skipped_component_pairs": 0,
     }
+    ref, cand, override = calls[0]
+    assert ref == ["d", "e"]  # smaller component as ref
+    assert cand == ["a", "b", "c"]
+    assert override["matching_vlad_neighbors"] == 0
+    assert override["matching_gps_distance"] == 0
+    assert override["matching_order_neighbors"] == 0
 
 
 def test_select_pairs_vlad_above_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    histograms: Dict[str, NDArray] = {
-        "a": np.array([0.0], dtype=np.float32),
-        "b": np.array([10.0], dtype=np.float32),
-        "c": np.array([0.1], dtype=np.float32),
-        "d": np.array([10.1], dtype=np.float32),
-        "e": np.array([50.0], dtype=np.float32),
-    }
-    monkeypatch.setattr(
-        match_components.pairs_selection,
-        "vlad_histograms",
-        lambda imgs, data: {im: histograms[im] for im in imgs},
-    )
+    calls: List[CandidateCall] = []
+    _fake_candidates(monkeypatch, calls)
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
-    pairs, stats = match_components.select_cross_component_pairs(
-        data, components, exhaustive_cap=1, vlad_neighbors=1
+
+    _, stats = match_components.select_cross_component_pairs(
+        data, {}, components, exhaustive_cap=1, vlad_neighbors=7
     )
-    assert pairs == {("a", "c"), ("b", "d")}
+
     assert stats["vlad_component_pairs"] == 1
     assert stats["exhaustive_component_pairs"] == 0
-    assert stats["fallback_component_pairs"] == 0
+    ref, cand, override = calls[0]
+    assert ref == ["a", "b"]
+    assert cand == ["c", "d", "e"]
+    assert override["matching_vlad_neighbors"] == 7
+    assert override["matching_vlad_gps_distance"] == 0
+    assert override["matching_vlad_gps_neighbors"] == 0
+    assert override["matching_bow_neighbors"] == 0
 
 
-def test_select_pairs_fallback_when_vlad_unavailable(
+def test_select_pairs_skips_when_vlad_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _raise(imgs: Set[str], data: Any) -> Dict[str, NDArray]:
+    def _raise(*args: Any) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
         raise FileNotFoundError("no VLAD words")
 
     monkeypatch.setattr(
-        match_components.pairs_selection, "vlad_histograms", _raise
+        match_components.pairs_selection, "match_candidates_from_metadata", _raise
     )
     data = FakeMatchesDataSet([], {})
     components: List[Set[str]] = [{"c", "d", "e"}, {"a", "b"}]
 
     pairs, stats = match_components.select_cross_component_pairs(
-        data, components, exhaustive_cap=2, vlad_neighbors=1
+        data, {}, components, exhaustive_cap=2, vlad_neighbors=1
     )
-    assert stats["fallback_component_pairs"] == 1
-    assert len(pairs) == 2
 
-    pairs_again, _ = match_components.select_cross_component_pairs(
-        data, components, exhaustive_cap=2, vlad_neighbors=1
-    )
-    assert pairs == pairs_again
-
-
-def test_subsampled_pairs_capped_and_deterministic() -> None:
-    comp_a = {"a", "b", "c"}
-    comp_b = {"d", "e", "f"}
-    capped = match_components._subsampled_pairs(comp_a, comp_b, 4)
-    assert len(capped) == 4
-    all_cross = {(x, y) for x in comp_a for y in comp_b}
-    assert capped <= all_cross
-    assert capped == match_components._subsampled_pairs(comp_a, comp_b, 4)
-
-    full = match_components._subsampled_pairs(comp_a, comp_b, 100)
-    assert len(full) == 9
-
-
-def test_subsampled_pairs_zero_cap() -> None:
-    assert match_components._subsampled_pairs({"a", "b"}, {"c", "d"}, 0) == set()
+    assert pairs == set()
+    assert stats["skipped_component_pairs"] == 1
 
 
 # --- Unit tests: matching.save_matches_merging ---

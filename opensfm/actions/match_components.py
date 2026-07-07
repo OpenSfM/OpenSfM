@@ -5,8 +5,7 @@ from timeit import default_timer as timer
 from typing import Any, Dict, List, Set, Tuple
 
 import networkx as nx
-from numpy.typing import NDArray
-from opensfm import geo, io, matching, pairs_selection, tracking
+from opensfm import io, matching, pairs_selection, tracking
 from opensfm.dataset_base import DataSetBase
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -31,8 +30,10 @@ def run_dataset(data: DataSetBase) -> None:
         )
         return
 
+    exifs = {im: data.load_exif(im) for im in images}
     pairs, selection_stats = select_cross_component_pairs(
         data,
+        exifs,
         components,
         data.config["matching_components_exhaustive_cap"],
         data.config["matching_components_vlad_neighbors"],
@@ -41,7 +42,6 @@ def run_dataset(data: DataSetBase) -> None:
 
     num_matched_pairs = 0
     if pairs_list:
-        exifs = {im: data.load_exif(im) for p in pairs_list for im in p}
         matched = matching.match_images_with_pairs(data, {}, exifs, pairs_list)
         matching.save_matches_merging(data, matched)
         matching.clear_cache()
@@ -92,8 +92,22 @@ def image_components(graph: nx.Graph) -> List[Set[str]]:
     )
 
 
+# Overrides deactivating every pair selection strategy: this makes
+# match_candidates_from_metadata return all ref x cand pairs.
+_ALL_STRATEGIES_OFF: Dict[str, Any] = {
+    "matching_gps_distance": 0,
+    "matching_gps_neighbors": 0,
+    "matching_graph_rounds": 0,
+    "matching_time_neighbors": 0,
+    "matching_order_neighbors": 0,
+    "matching_bow_neighbors": 0,
+    "matching_vlad_neighbors": 0,
+}
+
+
 def select_cross_component_pairs(
     data: DataSetBase,
+    exifs: Dict[str, Any],
     components: List[Set[str]],
     exhaustive_cap: int,
     vlad_neighbors: int,
@@ -102,32 +116,40 @@ def select_cross_component_pairs(
 
     Component pairs with at most exhaustive_cap candidate pairs are matched
     exhaustively; larger ones are pruned with VLAD similarity (top
-    vlad_neighbors candidates per image of the smaller component). Falls back
-    to deterministic subsampling when VLAD histograms are unavailable.
+    vlad_neighbors candidates per image of the smaller component), and
+    skipped with a warning when the VLAD data is unavailable.
     """
-    histograms: Dict[str, NDArray] = {}
     pairs: Set[Tuple[str, str]] = set()
     stats = _empty_selection_stats()
 
     for comp_a, comp_b in combinations(components, 2):
+        smaller, larger = sorted((comp_a, comp_b), key=lambda c: (len(c), min(c)))
+        override = dict(_ALL_STRATEGIES_OFF)
         if len(comp_a) * len(comp_b) <= exhaustive_cap:
-            pairs |= _exhaustive_pairs(comp_a, comp_b)
-            stats["exhaustive_component_pairs"] += 1
-            continue
-
-        vlad_pairs = _vlad_pairs(data, comp_a, comp_b, vlad_neighbors, histograms)
-        if vlad_pairs:
-            pairs |= vlad_pairs
-            stats["vlad_component_pairs"] += 1
+            stats_key = "exhaustive_component_pairs"
         else:
+            override["matching_vlad_neighbors"] = vlad_neighbors
+            override["matching_vlad_gps_distance"] = 0
+            override["matching_vlad_gps_neighbors"] = 0
+            stats_key = "vlad_component_pairs"
+
+        try:
+            new_pairs, _ = pairs_selection.match_candidates_from_metadata(
+                sorted(smaller), sorted(larger), exifs, data, override
+            )
+        except OSError as e:
             logger.warning(
-                "VLAD unavailable for components of size %d and %d, "
-                "falling back to subsampled matching",
+                "Skipping matching between components of size %d and %d: %s. "
+                "Provide VLAD data or raise matching_components_exhaustive_cap.",
                 len(comp_a),
                 len(comp_b),
+                e,
             )
-            pairs |= _subsampled_pairs(comp_a, comp_b, exhaustive_cap)
-            stats["fallback_component_pairs"] += 1
+            stats["skipped_component_pairs"] += 1
+            continue
+
+        pairs.update(pairs_selection.sorted_pair(im1, im2) for im1, im2 in new_pairs)
+        stats[stats_key] += 1
 
     return pairs, stats
 
@@ -136,68 +158,7 @@ def _empty_selection_stats() -> Dict[str, int]:
     return {
         "exhaustive_component_pairs": 0,
         "vlad_component_pairs": 0,
-        "fallback_component_pairs": 0,
-    }
-
-
-def _exhaustive_pairs(
-    comp_a: Set[str], comp_b: Set[str]
-) -> Set[Tuple[str, str]]:
-    return {pairs_selection.sorted_pair(a, b) for a in comp_a for b in comp_b}
-
-
-def _vlad_pairs(
-    data: DataSetBase,
-    comp_a: Set[str],
-    comp_b: Set[str],
-    vlad_neighbors: int,
-    histograms: Dict[str, NDArray],
-) -> Set[Tuple[str, str]]:
-    """Top-vlad_neighbors most similar cross-component pairs per image of the
-    smaller component. Returns an empty set if VLAD data is unavailable."""
-    smaller, larger = sorted((comp_a, comp_b), key=lambda c: (len(c), min(c)))
-
-    # GPS preemption is disabled (max distance/neighbors 0), so the exifs and
-    # reference arguments are never read.
-    try:
-        scored = pairs_selection.match_candidates_with_vlad(
-            data,
-            sorted(smaller),
-            sorted(larger),
-            {},
-            geo.TopocentricConverter(0, 0, 0),
-            vlad_neighbors,
-            0,
-            0,
-            False,
-            histograms,
-            False,
-        )
-    except OSError as e:
-        logger.warning("Could not compute VLAD candidates: %s", e)
-        return set()
-    return set(scored.keys())
-
-
-def _subsampled_pairs(
-    comp_a: Set[str], comp_b: Set[str], cap: int
-) -> Set[Tuple[str, str]]:
-    """Deterministic even-stride subsampling of the cross pairs down to cap
-    pairs, without materializing the full cross product."""
-    if cap <= 0:
-        return set()
-    images_a = sorted(comp_a)
-    images_b = sorted(comp_b)
-    total = len(images_a) * len(images_b)
-    if total <= cap:
-        return {
-            pairs_selection.sorted_pair(a, b) for a in images_a for b in images_b
-        }
-    return {
-        pairs_selection.sorted_pair(
-            images_a[index // len(images_b)], images_b[index % len(images_b)]
-        )
-        for index in (i * total // cap for i in range(cap))
+        "skipped_component_pairs": 0,
     }
 
 
