@@ -30,7 +30,6 @@ def run_dataset(data: DataSetBase) -> None:
         write_report(data, components, components, [], 0, {}, timer() - start)
         return
 
-    exifs = {im: data.load_exif(im) for im in images}
     pairs, selection_stats = select_cross_component_pairs(
         data,
         components,
@@ -41,6 +40,7 @@ def run_dataset(data: DataSetBase) -> None:
 
     num_matched_pairs = 0
     if pairs_list:
+        exifs = {im: data.load_exif(im) for p in pairs_list for im in p}
         matched = matching.match_images_with_pairs(data, {}, exifs, pairs_list)
         merge_and_save_matches(data, matched)
         matching.clear_cache()
