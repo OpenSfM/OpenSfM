@@ -22,7 +22,8 @@ def run_dataset(data: DataSetBase) -> None:
     images = data.images()
     min_matches: int = data.config["robust_matching_min_match"]
 
-    components = image_components(build_match_graph(data, images, min_matches))
+    graph = build_match_graph(data, images, min_matches)
+    components = image_components(graph)
     logger.info("Found %d connected components in the matching graph", len(components))
 
     if len(components) <= 1:
@@ -45,8 +46,14 @@ def run_dataset(data: DataSetBase) -> None:
         merge_and_save_matches(data, matched)
         matching.clear_cache()
         num_matched_pairs = sum(1 for m in matched.values() if len(m) >= min_matches)
+        # The saved graph gained exactly the matched pairs above the
+        # threshold, so update the in-memory graph instead of re-reading
+        # every match file.
+        for (im1, im2), m in matched.items():
+            if len(m) >= min_matches:
+                graph.add_edge(im1, im2)
 
-    components_after = image_components(build_match_graph(data, images, min_matches))
+    components_after = image_components(graph)
     logger.info(
         "Matching graph has %d connected components after merging",
         len(components_after),
