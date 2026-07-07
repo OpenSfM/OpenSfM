@@ -3,12 +3,12 @@ import logging
 from collections import defaultdict
 from itertools import combinations
 from timeit import default_timer as timer
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 import networkx as nx
 import numpy as np
 from numpy.typing import NDArray
-from opensfm import io, matching, pairs_selection, tracking, vlad
+from opensfm import geo, io, matching, pairs_selection, tracking
 from opensfm.dataset_base import DataSetBase
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -33,7 +33,6 @@ def run_dataset(data: DataSetBase) -> None:
     exifs = {im: data.load_exif(im) for im in images}
     pairs, selection_stats = select_cross_component_pairs(
         data,
-        exifs,
         components,
         data.config["matching_components_exhaustive_cap"],
         data.config["matching_components_vlad_neighbors"],
@@ -88,11 +87,9 @@ def image_components(graph: nx.Graph) -> List[Set[str]]:
 
 def select_cross_component_pairs(
     data: DataSetBase,
-    exifs: Dict[str, Any],
     components: List[Set[str]],
     exhaustive_cap: int,
     vlad_neighbors: int,
-    histograms: Optional[Dict[str, NDArray]] = None,
 ) -> Tuple[Set[Tuple[str, str]], Dict[str, int]]:
     """Select image pairs across every pair of components.
 
@@ -100,12 +97,8 @@ def select_cross_component_pairs(
     exhaustively; larger ones are pruned with VLAD similarity (top
     vlad_neighbors candidates per image of the smaller component). Falls back
     to deterministic subsampling when VLAD histograms are unavailable.
-    Pre-computed VLAD histograms can be passed in (mainly for tests); the
-    dict is reused as a cache across component pairs.
     """
-    if histograms is None:
-        histograms = {}
-
+    histograms: Dict[str, NDArray] = {}
     pairs: Set[Tuple[str, str]] = set()
     stats = {
         "exhaustive_component_pairs": 0,
@@ -119,9 +112,7 @@ def select_cross_component_pairs(
             stats["exhaustive_component_pairs"] += 1
             continue
 
-        vlad_pairs = _vlad_pairs(
-            data, exifs, comp_a, comp_b, vlad_neighbors, histograms
-        )
+        vlad_pairs = _vlad_pairs(data, comp_a, comp_b, vlad_neighbors, histograms)
         if vlad_pairs:
             pairs |= vlad_pairs
             stats["vlad_component_pairs"] += 1
@@ -146,7 +137,6 @@ def _exhaustive_pairs(
 
 def _vlad_pairs(
     data: DataSetBase,
-    exifs: Dict[str, Any],
     comp_a: Set[str],
     comp_b: Set[str],
     vlad_neighbors: int,
@@ -156,26 +146,25 @@ def _vlad_pairs(
     smaller component. Returns an empty set if VLAD data is unavailable."""
     smaller, larger = sorted((comp_a, comp_b), key=lambda c: (len(c), min(c)))
 
-    need = (comp_a | comp_b) - set(histograms)
-    if need:
-        try:
-            histograms.update(pairs_selection.vlad_histograms(need, data))
-        except Exception as e:
-            logger.warning("Could not compute VLAD histograms: %s", e)
-            return set()
-
-    cand_images = sorted(im for im in larger if im in histograms)
-    if not cand_images:
+    # GPS preemption is disabled (max distance/neighbors 0), so the exifs and
+    # reference arguments are never read.
+    try:
+        scored = pairs_selection.match_candidates_with_vlad(
+            data,
+            sorted(smaller),
+            sorted(larger),
+            {},
+            geo.TopocentricConverter(0, 0, 0),
+            vlad_neighbors,
+            0,
+            0,
+            False,
+            histograms,
+            False,
+        )
+    except OSError as e:
+        logger.warning("Could not compute VLAD candidates: %s", e)
         return set()
-
-    results = [
-        vlad.vlad_distances(im, cand_images, histograms)
-        for im in sorted(smaller)
-        if im in histograms
-    ]
-    scored = pairs_selection.construct_pairs(
-        results, vlad_neighbors, exifs, enforce_other_cameras=False
-    )
     return set(scored.keys())
 
 
