@@ -19,9 +19,11 @@ positional arguments:
     reconstruct          Compute the reconstruction
     crop_reconstruction  Crop reconstruction to N images around a center
     reconstruct_from_prior  Reconstruct from a prior reconstruction
+    correct_rolling_shutter  Trim/correct features for rolling shutter distortion
     bundle               Bundle a reconstruction
     mesh                 Add Delaunay meshes to the reconstruction
     undistort            Save undistorted images
+    dense_equalize       Estimate per-image radiometric corrections (gain + vignetting) from tracks
     dense_clustering     Dense stage 1: clusters, neighbours and depth ranges
     compute_depthmaps    Dense stage 2: compute and clean depthmaps
     fuse_depthmaps       Dense stage 3: fuse cleaned depthmaps per cluster
@@ -231,6 +233,16 @@ bin/opensfm crop_reconstruction -n 50 --shift -1.0 -1.0 path/to/dataset
 
 Options: `-n/--n` (images to keep, default 50), `--shift` (X Y shift of the center, default `0 0`).
 
+### `correct_rolling_shutter`
+
+Corrects the detected features of an aerial reconstruction for rolling-shutter distortion, using per-image speed estimates (from EXIF speed information, or computed from the camera motion of an existing reconstruction).
+
+```bash
+bin/opensfm correct_rolling_shutter --rolling-shutter-readout 30 path/to/dataset
+```
+
+Options: `--rolling-shutter-readout` — sensor readout time in milliseconds (default 30).
+
 ### `mesh`
 
 Computes a rough triangular mesh of the scene seen by each image, used for smooth motion simulation in the viewer. Output is `reconstruction.meshed.json`.
@@ -240,6 +252,12 @@ Computes a rough triangular mesh of the scene seen by each image, used for smoot
 Creates undistorted versions of the reconstruction, tracks, and images. Required before `compute_depthmaps`.
 
 Key config: `undistorted_image_format`, `undistorted_image_max_size`. See [configuration](configuration.md#undistortion).
+
+### `dense_equalize`
+
+Estimates per-image radiometric corrections — a per-channel gain (exposure/white balance) and a radial vignetting falloff — from the track correspondences (the same 3D point seen by several images should have the same colour), and writes `equalization.json` in the undistorted subfolder for the dense stages to divide out. Optional; run after `undistort`.
+
+Options: `--subfolder` — undistorted subfolder where to load and store data (default `undistorted`).
 
 ### Dense reconstruction: `dense_clustering`, `compute_depthmaps`, `fuse_depthmaps`, `dense_merging`
 
