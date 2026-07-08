@@ -46,6 +46,11 @@ The project uses `scikit-build-core` to compile C++ extensions.
     * Strive to minimize heap allocation and fragmentation by using stack-allocated buffer. In case of heap-allocated, re-use buffers, and avoid tiny buffers in long for loops.
 - **Design**: For the data, try to re-use core lib's data structures. In addition, it is of upmost importance to be able to manipulate large reconstructions efficiently. We strive to handle large amounts of data, so minimize copy operations, use Data-Oriented Design principles, and leverage GPU acceleration where possible (e.g., for map rendering).
 
+### Performance & Data-Safety Rules
+- **Assume large datasets (10k+ images)**: never reload data that an earlier stage of the same process already loaded. Pass loaded EXIFs/matches along, and run extra passes where the `feature_loader`/`vlad` caches are still warm (i.e. before `matching.clear_cache()`) — a standalone command is a cold process that reloads everything.
+- **Earlier pipeline outputs are immutable**: features, matches and EXIF written by a previous step must never be deleted or overwritten by a later step — additive writes only (see `matching.save_matches_merging`). Domain experts refuse anything else as too fragile.
+- **Reuse before writing**: pair selection, matching and graph code almost always exists. `pairs_selection.match_candidates_from_metadata` generates pairs between two candidate sets and honors `config_override` (all strategies at 0 = all pairs); see also `matching.match_images_with_pairs` and `tracking.load_matches`.
+
 ### Type Hinting
 - **Strictness**: The codebase uses `pyre-strict`. Ensure all new code has complete type annotations. A comment `# pyre-strict` is often present at the top of files.
 
