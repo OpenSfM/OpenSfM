@@ -14,7 +14,7 @@ OpenSfM is a Structure-from-Motion library with a hybrid architecture:
 
 ## 2. Key Developer Workflows
 
-> Use the `opensfm` conda environment for building, running, and testing. In sandboxed or non-interactive shells where `conda activate` fails, skip activation and call the environment's interpreter directly (`<conda_base>/envs/opensfm/bin/python -m pytest ...`) — everything works without activation.
+> Use the `opensfm` conda environment for building, running, and testing. In sandboxed or non-interactive shells where `conda activate` fails, skip activation and call the environment's interpreter directly (`<conda_base>/envs/opensfm/bin/python -m pytest ...`) — everything works without activation. On macOS, set up conda for the shell with `conda init zsh`, not bare `conda init`.
 
 ### Building
 The project uses `scikit-build-core` to compile C++ extensions (config in `pyproject.toml`).
