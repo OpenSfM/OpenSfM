@@ -14,7 +14,7 @@ def run_dataset(data: DataSetBase) -> None:
     start = timer()
     exifs = {im: data.load_exif(im) for im in images}
     pairs_matches, preport = matching.match_images(data, {}, images, images, exifs)
-    if data.config["matching_merge_components"]:
+    if data.config["force_match_components"]:
         new_matches, creport = matching.bridge_matching_components(
             data, {}, images, pairs_matches, exifs
         )
