@@ -8,7 +8,6 @@ import glob
 from concurrent.futures import ThreadPoolExecutor
 
 from timeit import default_timer as timer
-from collections import defaultdict
 from itertools import combinations
 from typing import Any, Dict, Generator, List, Optional, Set, Sized, Tuple
 
@@ -248,39 +247,6 @@ def save_matches(
 
     for im1, im1_matches in matches_per_im1.items():
         data.save_matches(im1, im1_matches)
-
-
-def save_matches_merging(
-    data: DataSetBase,
-    matched_pairs: Dict[Tuple[str, str], List[Tuple[int, int]]],
-) -> None:
-    """Merge new pairwise matches into the existing per-image match files.
-
-    Existing matches are never modified or removed: a pair already stored in
-    either orientation (see DataSet.find_matches) keeps its original matches
-    and the new ones are dropped. Only brand-new pairs are added.
-    """
-    new_per_image: Dict[str, Dict[str, NDArray]] = defaultdict(dict)
-    for (im1, im2), m in matched_pairs.items():
-        new_per_image[im1][im2] = np.asarray(m, dtype=np.int32).reshape(-1, 2)
-
-    loaded: Dict[str, Dict[str, NDArray]] = {}
-
-    def _load(im: str) -> Dict[str, NDArray]:
-        if im not in loaded:
-            loaded[im] = data.load_matches(im) if data.matches_exists(im) else {}
-        return loaded[im]
-
-    for im1 in sorted(new_per_image):
-        im1_matches = _load(im1)
-        added = False
-        for im2, m in new_per_image[im1].items():
-            if im2 in im1_matches or im1 in _load(im2):
-                continue
-            im1_matches[im2] = m
-            added = True
-        if added:
-            data.save_matches(im1, im1_matches)
 
 
 def build_match_graph(

@@ -13,7 +13,6 @@ positional arguments:
     extract_metadata     Extract metadata from images' EXIF tags
     detect_features      Compute features for all images
     match_features       Match features between image pairs
-    match_components     Match features across disconnected components of the matching graph
     create_rig           Create rig cameras and assignments
     create_tracks        Link pairwise matches into tracks
     convert_gcp          Convert GCPs between gcp_list.txt and JSON
@@ -168,15 +167,9 @@ Matches feature points between images and stores results in the `matches/` folde
 
 Matching can be restricted (and sped up) by GPS distance, capture time, or file name order.
 
-On GPS-denied or no-GPS captures, pair selection can leave the matching graph split into disconnected components, which `reconstruct` turns into separate partial reconstructions. Set `matching_merge_components: true` to run an extra pass at the end of `match_features` that matches image pairs across the components: exhaustively when a component pair has few candidate pairs (`matching_components_exhaustive_cap`), otherwise pruned by VLAD image similarity (`matching_components_vlad_neighbors`).
+On GPS-denied or no-GPS captures, pair selection can leave the matching graph split into disconnected components, which `reconstruct` turns into separate partial reconstructions. Set `force_match_components: true` to run an extra pass at the end of `match_features` that matches image pairs across the components: exhaustively when a component pair has few candidate pairs (`matching_components_exhaustive_cap`), otherwise pruned by VLAD image similarity (`matching_components_vlad_neighbors`). The component counts before/after are added to `reports/matches.json`.
 
-Key config: `matching_gps_distance`, `matching_gps_neighbors`, `matching_time_neighbors`, `matching_order_neighbors`, `lowes_ratio`, `matcher_type`, `matching_merge_components`. See [configuration](configuration.md#pair-selection).
-
-### `match_components`
-
-Runs the component-bridging pass described under `match_features` on an **already matched** dataset, without re-running the matching. New matches are added to the `matches/` folder without touching existing ones, so `create_tracks` bridges the components. Writes `reports/match_components.json` with component counts before/after. For new runs, prefer `matching_merge_components: true`, which avoids reloading features and VLAD data.
-
-Key config: `matching_components_exhaustive_cap`, `matching_components_vlad_neighbors`, `robust_matching_min_match`.
+Key config: `matching_gps_distance`, `matching_gps_neighbors`, `matching_time_neighbors`, `matching_order_neighbors`, `lowes_ratio`, `matcher_type`, `force_match_components`. See [configuration](configuration.md#pair-selection).
 
 ### `create_rig`
 
