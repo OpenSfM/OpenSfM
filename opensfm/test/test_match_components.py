@@ -1,12 +1,14 @@
 # pyre-strict
+import os
 from typing import Any, Dict, List, Set, Tuple
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
-from opensfm import matching
-from opensfm.actions import match_features
+from opensfm import dataset, matching
+from opensfm.actions import detect_features, extract_metadata, match_features
 from opensfm.synthetic_data import synthetic_dataset, synthetic_scene
+from opensfm.test import data_generation
 
 
 def _m(n: int) -> NDArray:
@@ -262,6 +264,54 @@ def test_bridge_two_components_integration(
     # The initial matches are untouched.
     assert set(pairs_matches) == set(snapshot)
     assert all(pairs_matches[k] is snapshot[k] for k in snapshot)
+
+
+def _create_lund_test_folder(tmpdir: Any) -> dataset.DataSet:
+    src = os.path.join(data_generation.DATA_PATH, "lund")
+    dst = str(tmpdir.mkdir("lund"))
+    for filename in ["images", "config.yaml"]:
+        os.symlink(os.path.join(src, filename), os.path.join(dst, filename))
+    return dataset.DataSet(dst)
+
+
+def test_bridge_components_real_vlad_selection(tmpdir: Any) -> None:
+    """Regression test for the real (non-monkeypatched) VLAD selection path,
+    taken when a component pair is above matching_components_exhaustive_cap.
+    The other bridge tests fake pairs_selection.match_candidates_from_metadata;
+    this one exercises the on-disk VLAD codebook load and the
+    feature_type/feature_root/hahog_normalize_to_uchar assertions in
+    opensfm/bow.py, which _select_cross_component_pairs's `except OSError`
+    does not catch.
+    """
+    data = _create_lund_test_folder(tmpdir)
+    images = sorted(data.images())[:6]
+    data.image_list = images
+    half_a, half_b = images[:3], images[3:]
+
+    extract_metadata.run_dataset(data)
+    detect_features.run_dataset(data)
+
+    pairs_matches: Dict[Tuple[str, str], List[Tuple[int, int]]] = {}
+    for half in (half_a, half_b):
+        half_matches, _ = matching.match_images(data, {}, half, half)
+        pairs_matches.update(half_matches)
+
+    min_matches = data.config["robust_matching_min_match"]
+    before = matching.image_components(
+        matching.build_match_graph(images, pairs_matches, min_matches)
+    )
+    assert len(before) == 2
+
+    data.config["matching_components_exhaustive_cap"] = 0  # force the VLAD branch
+    new_matches, report = matching.bridge_matching_components(
+        data, {}, images, pairs_matches
+    )
+
+    assert report["vlad_component_pairs"] == 1
+    assert report["exhaustive_component_pairs"] == 0
+    assert report["skipped_component_pairs"] == 0
+    assert report["num_candidate_pairs"] > 0
+    assert isinstance(new_matches, dict)
 
 
 # --- match_features integration of the bridging pass ---
