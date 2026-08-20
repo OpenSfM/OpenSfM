@@ -1062,7 +1062,7 @@ void BundleAdjuster::Run() {
   }
 
   // Add linear motion priors
-  ceres::LossFunction* linear_motion_prior_loss = new ceres::CauchyLoss(1
+  ceres::LossFunction* linear_motion_prior_loss = new ceres::CauchyLoss(1);
   for (auto& a : linear_motion_prior_) {
     auto* linear_motion = new LinearMotionError(
         a.alpha, a.position_std_deviation, a.orientation_std_deviation);
