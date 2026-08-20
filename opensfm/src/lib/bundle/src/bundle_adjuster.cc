@@ -955,11 +955,8 @@ void BundleAdjuster::Run() {
   }
 
   // Add common position errors
-  ceres::LossFunction* common_position_loss = nullptr;
+  ceres::LossFunction* common_position_loss = new ceres::TukeyLoss(1);
   for (auto& c : common_positions_) {
-    if (common_position_loss == nullptr) {
-      common_position_loss = new ceres::TukeyLoss(1);
-    }
     auto* common_position = new CommonPositionError(c.margin, c.std_deviation);
     auto* cost_function =
         new ceres::DynamicAutoDiffCostFunction<CommonPositionError>(
@@ -1009,13 +1006,9 @@ void BundleAdjuster::Run() {
   }
 
   // Add absolute up vector errors
-  ceres::LossFunction* up_vector_loss = nullptr;
+  ceres::LossFunction* up_vector_loss = new ceres::CauchyLoss(1);
   for (auto& a : absolute_up_vectors_) {
     if (a.std_deviation > 0) {
-      if (up_vector_loss == nullptr) {
-        up_vector_loss = new ceres::CauchyLoss(1);
-      }
-
       ceres::CostFunction* up_cost_function =
           new ceres::AutoDiffCostFunction<UpVectorError, 3, 6, 6>(
               new UpVectorError(a.up_vector, a.std_deviation));
@@ -1027,12 +1020,9 @@ void BundleAdjuster::Run() {
   }
 
   // Add absolute pan (compass) errors
-  ceres::LossFunction* pan_loss = nullptr;
+  ceres::LossFunction* pan_loss = new ceres::CauchyLoss(1);
   for (auto& a : absolute_pans_) {
     if (a.std_deviation > 0) {
-      if (pan_loss == nullptr) {
-        pan_loss = new ceres::CauchyLoss(1);
-      }
       ceres::CostFunction* pan_cost_function =
           new ceres::AutoDiffCostFunction<PanAngleError, 1, 6, 6>(
               new PanAngleError(a.angle, a.std_deviation));
@@ -1044,12 +1034,9 @@ void BundleAdjuster::Run() {
   }
 
   // Add absolute tilt errors
-  ceres::LossFunction* tilt_loss = nullptr;
+  ceres::LossFunction* tilt_loss = new ceres::CauchyLoss(1);
   for (auto& a : absolute_tilts_) {
     if (a.std_deviation > 0) {
-      if (tilt_loss == nullptr) {
-        tilt_loss = new ceres::CauchyLoss(1);
-      }
       ceres::CostFunction* tilt_cost_function =
           new ceres::AutoDiffCostFunction<TiltAngleError, 1, 6, 6>(
               new TiltAngleError(a.angle, a.std_deviation));
@@ -1061,12 +1048,9 @@ void BundleAdjuster::Run() {
   }
 
   // Add absolute roll errors
-  ceres::LossFunction* roll_loss = nullptr;
+  ceres::LossFunction* roll_loss = new ceres::CauchyLoss(1);
   for (auto& a : absolute_rolls_) {
     if (a.std_deviation > 0) {
-      if (roll_loss == nullptr) {
-        roll_loss = new ceres::CauchyLoss(1);
-      }
       ceres::CostFunction* roll_cost_function =
           new ceres::AutoDiffCostFunction<RollAngleError, 1, 6, 6>(
               new RollAngleError(a.angle, a.std_deviation));
@@ -1078,12 +1062,8 @@ void BundleAdjuster::Run() {
   }
 
   // Add linear motion priors
-  ceres::LossFunction* linear_motion_prior_loss_ = nullptr;
+  ceres::LossFunction* linear_motion_prior_loss = new ceres::CauchyLoss(1
   for (auto& a : linear_motion_prior_) {
-    if (linear_motion_prior_loss_ == nullptr) {
-      linear_motion_prior_loss_ = new ceres::CauchyLoss(1);
-    }
-
     auto* linear_motion = new LinearMotionError(
         a.alpha, a.position_std_deviation, a.orientation_std_deviation);
     auto* cost_function =
@@ -1134,7 +1114,7 @@ void BundleAdjuster::Run() {
             linear_motion->shot0_rig_camera_index;
       }
     }
-    solver.AddResidualBlock(cost_function, linear_motion_prior_loss_, "MOTION",
+    solver.AddResidualBlock(cost_function, linear_motion_prior_loss, "MOTION",
                             parameter_blocks);
   }
 
