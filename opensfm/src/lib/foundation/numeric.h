@@ -25,7 +25,7 @@ bool SolveAX0(const MAT& A, VEC* solution) {
   }
 
   Eigen::JacobiSVD<MAT> svd(A, Eigen::ComputeFullV);
-  const int data_size = A.cols();
+  const int data_size = static_cast<int>(A.cols());
   *solution = svd.matrixV().col(data_size - 1);
 
   // Check ratio of smallest eigenvalues for single nullspace

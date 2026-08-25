@@ -19,7 +19,7 @@ struct BearingErrorCost : public ceres::CostFunction {
                    const Vec3d& point)
       : centers_(centers), bearings_(bearings), point_(point) {
     mutable_parameter_block_sizes()->push_back(Size);
-    set_num_residuals(bearings_.rows() * 3);
+    set_num_residuals(static_cast<int>(bearings_.rows() * 3));
   }
   bool Evaluate(double const* const* parameters, double* residuals,
                 double** jacobians) const override {
@@ -119,7 +119,7 @@ std::pair<bool, Vec3d> TriangulateBearingsDLT(const std::vector<Mat34d>& Rts,
 
 Vec4d TriangulateBearingsDLTSolve(const MatX3d& bearings,
                                   const std::vector<Mat34d>& Rts) {
-  const int nviews = bearings.rows();
+  const int nviews = static_cast<int>(bearings.rows());
   assert(nviews == Rts.size());
 
   MatXd A(2 * nviews, 4);

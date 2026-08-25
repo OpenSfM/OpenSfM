@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 template <class MODEL, class LOMODEL = MODEL>
@@ -44,8 +45,8 @@ class MedianBasedScoring {
 
   template <class IT>
   double ComputeMedian(IT begin, IT end) const {
-    const int count = (end - begin);
-    const int median_index = count * nth_;
+    const int count = static_cast<int>(end - begin);
+    const int median_index = static_cast<int>(std::round(count * nth_)); 
     std::vector<double> norms(count);
     for (IT it = begin; it != end; ++it) {
       norms[(it - begin)] = it->norm();

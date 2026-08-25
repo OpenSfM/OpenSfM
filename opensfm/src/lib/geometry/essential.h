@@ -64,7 +64,7 @@ enum {
 template <class IT, class MAT>
 inline void EncodeEpipolarEquation(IT begin, IT end, MAT* A) {
   for (IT it = begin; it != end; ++it) {
-    int i = (it - begin);
+    int i = static_cast<int>(it - begin);
     const auto x1 = it->first;
     const auto x2 = it->second;
     A->row(i) << x2(0) * x1.transpose(), x2(1) * x1.transpose(),
@@ -165,7 +165,7 @@ std::vector<Eigen::Matrix<double, 3, 3>> EssentialFivePoints(IT begin, IT end) {
 
 template <class IT>
 std::vector<Eigen::Matrix<double, 3, 3>> EssentialNPoints(IT begin, IT end) {
-  const int count = end - begin;
+  const int count = static_cast<int>(end - begin);
   Eigen::MatrixXd A(count, 9);
   A.setZero();
   EncodeEpipolarEquation(begin, end, &A);
