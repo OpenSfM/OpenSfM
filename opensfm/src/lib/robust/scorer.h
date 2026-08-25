@@ -46,7 +46,7 @@ class MedianBasedScoring {
   template <class IT>
   double ComputeMedian(IT begin, IT end) const {
     const int count = static_cast<int>(end - begin);
-    const int median_index = static_cast<int>(std::round(count * nth_)); 
+    const int median_index = static_cast<int>(count * nth_); 
     std::vector<double> norms(count);
     for (IT it = begin; it != end; ++it) {
       norms[(it - begin)] = it->norm();
