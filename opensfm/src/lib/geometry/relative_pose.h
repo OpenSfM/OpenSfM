@@ -87,13 +87,13 @@ template <class IT>
 struct RelativePoseCost {
   RelativePoseCost(IT begin, IT end) : begin_(begin), end_(end) {
     std::srand(42);
-    const int count = end_ - begin_;
+    const int count = static_cast<int>(end_ - begin_);
     for (int i = 0; i < MAX_ERRORS; ++i) {
       // Note that float(RAND_MAX) cannot be exactly represented as a float. We
       // ignore the small inaccuracy here; this is already a bad way to get
       // random numbers.
-      const int index =
-          (float(std::rand()) / static_cast<float>(RAND_MAX)) * count;
+      const int index = static_cast<int>(
+          (float(std::rand()) / static_cast<float>(RAND_MAX)) * count);
       picked_errors_.push_back(begin_ + index);
     }
   }

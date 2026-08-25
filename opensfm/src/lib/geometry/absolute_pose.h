@@ -133,8 +133,8 @@ Eigen::Vector3d TranslationBetweenPoints(IT begin, IT end,
     F1 += F;
     F2 += (F - identity) * rotation * it->second;
   }
-  F2 /= (end - begin);
-  F1 /= (end - begin);
+  F2 /= static_cast<double>(end - begin);
+  F1 /= static_cast<double>(end - begin);
 
   return (identity - F1).inverse() * F2;
 }

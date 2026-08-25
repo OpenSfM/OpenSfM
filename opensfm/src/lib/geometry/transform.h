@@ -13,8 +13,8 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> ComputeAverage(IT begin, IT end) {
     q_average += it->first;
     p_average += it->second;
   }
-  q_average /= (end - begin);
-  p_average /= (end - begin);
+  q_average /= static_cast<double>(end - begin);
+  p_average /= static_cast<double>(end - begin);
   return std::make_pair(q_average, p_average);
 }
 
