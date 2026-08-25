@@ -2,15 +2,15 @@
   "badge": {
     "color": "#fe7d37",
     "label": "coverage",
-    "message": "55.5%"
+    "message": "55.6%"
   },
   "reports": [
     {
-      "branch_rate": 46.33574776310183,
-      "branches_covered": 2175,
+      "branch_rate": 46.3996591393268,
+      "branches_covered": 2178,
       "branches_valid": 4694,
-      "line_rate": 62.26787587142945,
-      "lines_covered": 10093,
+      "line_rate": 62.52699117774077,
+      "lines_covered": 10135,
       "lines_valid": 16209,
       "name": "coverage-python"
     },
@@ -25,11 +25,11 @@
     }
   ],
   "total": {
-    "branch_rate": 30.47382176882219,
-    "branches_covered": 14458,
+    "branch_rate": 30.48014501306804,
+    "branches_covered": 14461,
     "branches_valid": 47444,
-    "line_rate": 55.5274434719183,
-    "lines_covered": 24361,
+    "line_rate": 55.6231765134938,
+    "lines_covered": 24403,
     "lines_valid": 43872,
     "name": "total"
   }
