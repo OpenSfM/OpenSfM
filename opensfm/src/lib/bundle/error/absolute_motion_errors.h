@@ -5,19 +5,25 @@
 #include <bundle/error/position_functors.h>
 
 #include <Eigen/Eigen>
+#include <algorithm>
 
 namespace bundle {
 struct UpVectorError {
   UpVectorError(const Vec3d& acceleration, double std_deviation)
       : scale_(1.0 / std_deviation) {
-    acceleration_ = acceleration.normalized();
+    const double norm = acceleration.norm();
+    if (norm < 1e-10) {
+        throw std::runtime_error(
+            "UpVectorError: acceleration vector has near-zero magnitude");
+    }
+    acceleration_ = acceleration / norm;
   }
 
   template <typename T>
   bool operator()(const T* const rig_instance, const T* const rig_camera,
                   T* residuals) const {
     T const* const params[] = {rig_instance, rig_camera};
-    Vec3<T> R = ShotRotationFunctor(0, 1)(params);
+    const Vec3<T> R = ShotRotationFunctor(0, 1)(params);
     Eigen::Map<Vec3<T>> residual(residuals);
 
     const Vec3<T> acceleration = acceleration_.cast<T>();
@@ -39,7 +45,7 @@ struct PanAngleError {
   bool operator()(const T* const rig_instance, const T* const rig_camera,
                   T* residuals) const {
     T const* const params[] = {rig_instance, rig_camera};
-    Vec3<T> R = ShotRotationFunctor(0, 1)(params);
+    const Vec3<T> R = ShotRotationFunctor(0, 1)(params);
 
     const Vec3<T> z_axis = Vec3d(0, 0, 1).cast<T>();
     const auto z_world = RotatePoint(R, z_axis);
@@ -65,13 +71,13 @@ struct TiltAngleError {
   bool operator()(const T* const rig_instance, const T* const rig_camera,
                   T* residuals) const {
     T const* const params[] = {rig_instance, rig_camera};
-    Vec3<T> R = ShotRotationFunctor(0, 1)(params);
+    const Vec3<T> R = ShotRotationFunctor(0, 1)(params);
     T ez[3] = {T(0), T(0), T(1)};  // ez: A point in front of the camera (z=1)
     T Rt_ez[3];
     ceres::AngleAxisRotatePoint(R.data(), ez, Rt_ez);
 
-    T l = sqrt(Rt_ez[0] * Rt_ez[0] + Rt_ez[1] * Rt_ez[1]);
-    T predicted_angle = -atan2(Rt_ez[2], l);
+    const T l = sqrt(Rt_ez[0] * Rt_ez[0] + Rt_ez[1] * Rt_ez[1]);
+    const T predicted_angle = -atan2(Rt_ez[2], l);
 
     residuals[0] = T(scale_) * DiffBetweenAngles(predicted_angle, T(angle_));
     return true;
@@ -89,7 +95,7 @@ struct RollAngleError {
   bool operator()(const T* const rig_instance, const T* const rig_camera,
                   T* residuals) const {
     T const* const params[] = {rig_instance, rig_camera};
-    Vec3<T> R = ShotRotationFunctor(0, 1)(params);
+    const Vec3<T> R = ShotRotationFunctor(0, 1)(params);
     T ex[3] = {T(1), T(0), T(0)};  // A point to the right of the camera (x=1)
     T ez[3] = {T(0), T(0), T(1)};  // A point in front of the camera (z=1)
     T Rt_ex[3], Rt_ez[3];
@@ -97,7 +103,7 @@ struct RollAngleError {
     ceres::AngleAxisRotatePoint(R.data(), ez, Rt_ez);
 
     T a[3] = {Rt_ez[1], -Rt_ez[0], T(0)};
-    T la = sqrt(a[0] * a[0] + a[1] * a[1]);
+    const T la = sqrt(a[0] * a[0] + a[1] * a[1]);
 
     const double eps = 1e-5;
     if (la < eps) {
@@ -109,13 +115,13 @@ struct RollAngleError {
     a[1] /= la;
     T b[3];
     ceres::CrossProduct(Rt_ex, a, b);
-    T sin_roll = Rt_ez[0] * b[0] + Rt_ez[1] * b[1] + Rt_ez[2] * b[2];
+    const T sin_roll = Rt_ez[0] * b[0] + Rt_ez[1] * b[1] + Rt_ez[2] * b[2];
     if (sin_roll <= -(1.0 - eps)) {
       residuals[0] = T(0.0);
       return true;
     }
 
-    T predicted_angle = asin(sin_roll);
+    const T predicted_angle = asin(sin_roll);
     residuals[0] = T(scale_) * DiffBetweenAngles(predicted_angle, T(angle_));
 
     return true;
@@ -142,7 +148,7 @@ struct HeatmapdCostFunctor {
   bool operator()(const T* const rig_instance, const T* const rig_camera,
                   T* residuals) const {
     T const* const params[] = {rig_instance, rig_camera};
-    Vec3<T> position = ShotPositionFunctor(0, 1)(params);
+    const Vec3<T> position = ShotPositionFunctor(0, 1)(params);
     const T x_coor = position[0] - x_offset_;
     const T y_coor = position[1] - y_offset_;
     // const T z_coor = x[2]; - Z goes brrrrr
@@ -174,7 +180,7 @@ struct HeatmapdCostFunctor {
 
 struct TranslationPriorError {
   explicit TranslationPriorError(const double prior_norm)
-      : prior_norm_(prior_norm) {}
+      : prior_norm_(std::max(prior_norm, kEpsSq)) {}
 
   template <typename T>
   bool operator()(const T* const rig_instance1, const T* const rig_instance2,
@@ -183,10 +189,14 @@ struct TranslationPriorError {
         Eigen::Map<const Vec3<T>>(rig_instance1 + Pose::Parameter::TX);
     const auto t2 =
         Eigen::Map<const Vec3<T>>(rig_instance2 + Pose::Parameter::TX);
-    residuals[0] = log((t1 - t2).norm() / T(prior_norm_));
+    // Use squaredNorm + eps inside sqrt to keep autodiff derivatives finite
+    // when t1 == t2 (avoids derivative singularity of sqrt at zero)
+    T safe_norm = ceres::sqrt((t1 - t2).squaredNorm() + T(kEpsSq));
+    residuals[0] = ceres::log(safe_norm / T(prior_norm_));
     return true;
   }
 
+  static constexpr double kEpsSq = 1e-20;
   const double prior_norm_;
 };
 }  // namespace bundle
