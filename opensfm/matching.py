@@ -306,8 +306,11 @@ def match_unwrap_args(
     camera2 = cameras[exifs[im2]["camera"]]
 
     if desc_matches is not None:
+        # `desc_matches` comes from `generate_binary_cache`, which binarizes
+        # descriptors loaded with `masked=True`, so its indices live in the
+        # masked index space.
         matches = match_robust(im1, im2, desc_matches,
-                               camera1, camera2, data, config_override, False)
+                               camera1, camera2, data, config_override, True)
     else:
         matches = match(im1, im2, camera1, camera2,
                         data, config_override, pose)
