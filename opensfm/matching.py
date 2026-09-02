@@ -306,8 +306,11 @@ def match_unwrap_args(
     camera2 = cameras[exifs[im2]["camera"]]
 
     if desc_matches is not None:
+        # `desc_matches` comes from `generate_binary_cache`, which binarizes
+        # descriptors loaded with `masked=True`, so its indices live in the
+        # masked index space.
         matches = match_robust(im1, im2, desc_matches,
-                               camera1, camera2, data, config_override, False)
+                               camera1, camera2, data, config_override, True)
     else:
         matches = match(im1, im2, camera1, camera2,
                         data, config_override, pose)
@@ -1359,13 +1362,18 @@ def collect_training_pairs(
         if len(match_arr) < 5:
             continue
 
-        # Load descriptors for both images.
+        # Load descriptors for both images. `match_robust` converts its result
+        # back to the unmasked index space before returning (see
+        # `unfilter_matches`), so the descriptors have to be loaded unmasked as
+        # well. Loading them masked indexed a shorter array with indices meant
+        # for the longer one: wrong descriptor pairs at best, IndexError as soon
+        # as the largest index exceeded the masked length.
         fd1 = feature_loader.instance.load_all_data(
-            data, im1, masked=True,
+            data, im1, masked=False,
             segmentation_in_descriptor=segmentation_in_desc,
         )
         fd2 = feature_loader.instance.load_all_data(
-            data, im2, masked=True,
+            data, im2, masked=False,
             segmentation_in_descriptor=segmentation_in_desc,
         )
         if fd1 is None or fd2 is None:
