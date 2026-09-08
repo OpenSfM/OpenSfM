@@ -68,13 +68,14 @@ def load_matches(
     dataset: DataSetBase, images: List[str]
 ) -> t.Iterator[Tuple[Tuple[str, str], List[Tuple[int, int]]]]:
     """Yield matches for each image pair"""
+    images_set = set(images)
     for im1 in images:
         try:
             im1_matches = dataset.load_matches(im1)
         except IOError:
             continue
         for im2 in im1_matches:
-            if im2 in images:
+            if im2 in images_set:
                 yield (im1, im2), im1_matches[im2]
 
 
