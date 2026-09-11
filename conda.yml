@@ -1,4 +1,11 @@
 name: opensfm
+# All conda-forge, no exceptions. Mixing in `anaconda`/`defaults` here once
+# pulled libgcc/libstdc++/libgomp from anaconda's toolchain while
+# ceres-solver/gperftools/etc came from conda-forge - two different C++ ABIs
+# in one env, cross-heap corruption (tcmalloc "Attempt to free invalid
+# pointer" -> SIGILL) in OpenSfM's own compiled extension at runtime.
+channels:
+    - conda-forge
 dependencies:
     - python=3.10
     - pip
@@ -8,7 +15,7 @@ dependencies:
     - libxcrypt # [linux] [osx]
     - libopencv<5.0 *=headless*
     - py-opencv<5.0
-    - anaconda::metis
+    - conda-forge::metis
     - conda-forge::suitesparse=7.10.*
     - conda-forge::llvm-openmp
     - conda-forge::cxx-compiler
