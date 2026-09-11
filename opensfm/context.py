@@ -100,10 +100,16 @@ if sys.platform == "win32":
         """Available memory in MB.
 
         Only works on Windows
+
+        `ullAvailPhys` is free physical RAM at this instant, so any unrelated
+        application running alongside OpenSfM shrinks the process count. Linux
+        reports the `available` column of `free`, which also counts reclaimable
+        page cache; Windows has no equivalent counter, so fall back to a
+        fraction of total physical memory to keep the two platforms comparable.
         """
         stat = MEMORYSTATUSEX()
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
-        return stat.ullAvailPhys / 1024 / 1024
+        return max(stat.ullAvailPhys, stat.ullTotalPhys * 0.75) / 1024 / 1024
 
     def current_memory_usage() -> int:
         stat = MEMORYSTATUSEX()

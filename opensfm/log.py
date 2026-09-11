@@ -1,7 +1,8 @@
 # pyre-strict
 import logging
-import os
 from typing import Optional
+
+from opensfm import context
 
 
 def setup() -> None:
@@ -13,10 +14,9 @@ def setup() -> None:
 def memory_available() -> Optional[int]:
     """Available memory in MB.
 
-    Only works on linux and returns None otherwise.
+    Delegates to the platform-aware implementation. This used to shell out to
+    `free -t -m` unconditionally, which on Windows printed a command-not-found
+    error and returned None, silently disabling the memory-aware queue and
+    process sizing in `features_processing` and `undistort`.
     """
-    lines = os.popen("free -t -m").readlines()
-    if not lines:
-        return None
-    available_mem = int(lines[1].split()[6])
-    return available_mem
+    return context.memory_available()
