@@ -6,23 +6,27 @@ set(DENSE_FILES
     estimator.h
     fuser.h
     svo.h
-    svo_fuser.h
     svo_opencl.h
     svo_opencl_kernels.h
     opencl_kernels.h
     opencl_utils.h
     openmvs_exporter.h
     src/svo.cc
-    src/svo_fuser.cc
 )
 
 # Conditionally add GPU sources (require OpenCL).
 if(OPENSFM_HAVE_OPENCL)
     list(APPEND DENSE_FILES
+        svo_fuser.h
         src/cleaner.cc
         src/cluster_estimator.cc
         src/estimator.cc
         src/svo_opencl.cc
+        src/svo_fuser.cc
+    )
+else()
+    list(APPEND DENSE_FILES
+        src/svo_fuser_stub.cc
     )
 endif()
 
