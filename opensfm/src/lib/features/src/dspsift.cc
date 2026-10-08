@@ -168,7 +168,7 @@ py::tuple dspsift(foundation::pyarray_f image, float peak_threshold,
     if (domain_size_pooling) {
       d_min_scale = dsp_min_scale;
       d_scale_step = (dsp_max_scale - dsp_min_scale) /
-                        dsp_num_scales;
+                        (dsp_num_scales - 1);
       d_num_scales = dsp_num_scales;
     }
 
