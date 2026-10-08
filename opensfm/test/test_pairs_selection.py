@@ -142,6 +142,25 @@ def test_match_candidates_from_metadata_graph(lund_path: str) -> None:
     match_candidates_from_metadata(data)
 
 
+def test_match_candidates_no_gps_ref_against_gps_candidates(lund_path: str) -> None:
+    """A ref image without GPS must still be matched against GPS candidates."""
+    config = create_match_candidates_config(matching_order_neighbors=2)
+    data_generation.save_config(config, lund_path)
+    data = dataset.DataSet(lund_path)
+
+    ims = sorted(data.images())
+    ims_ref, ims_cand = ims[:1], ims[1:]
+    exifs = {im: data.load_exif(im) for im in ims}
+    exifs[ims_ref[0]] = {k: v for k, v in exifs[ims_ref[0]].items() if k != "gps"}
+
+    pairs, _ = pairs_selection.match_candidates_from_metadata(
+        ims_ref, ims_cand, exifs, data, {}
+    )
+
+    assert len(pairs) > 0
+    assert all(ims_ref[0] in pair for pair in pairs)
+
+
 def test_get_gps_point() -> None:
     reference = geo.TopocentricConverter(0, 0, 0)
     exifs = {}
