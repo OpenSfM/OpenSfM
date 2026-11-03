@@ -32,13 +32,16 @@ def run_dataset(
     point_num_views = point_num_views
     cluster_list=[cluster]
     if reconstructions:
-        if cluster==-1:
+	if cluster==-1:
            cluster_list=range(len(reconstructions))
         for _cluster_id in cluster_list:
+            _name="reconstruction"
+            if cluster==-1:
+                _name+=str(_cluster_id)
             data.save_ply(
                 reconstructions[int(_cluster_id)],
                 tracks_manager,
-                "reconstruction-"+str(_cluster_id)+".ply",
+                _name+".ply",
                 no_cameras,
                 no_points,
                 point_num_views,
