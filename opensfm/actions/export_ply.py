@@ -32,7 +32,7 @@ def run_dataset(
     point_num_views = point_num_views
     cluster_list=[cluster]
     if reconstructions:
-	if cluster==-1:
+        if cluster==-1:
            cluster_list=range(len(reconstructions))
         for _cluster_id in cluster_list:
             _name="reconstruction"
