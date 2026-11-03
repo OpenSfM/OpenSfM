@@ -38,7 +38,7 @@ def run_dataset(
             data.save_ply(
                 reconstructions[int(_cluster_id)],
                 tracks_manager,
-                "reconstruction_cluster_"+str(_cluster_id)+".ply",
+                "reconstruction-"+str(_cluster_id)+".ply",
                 no_cameras,
                 no_points,
                 point_num_views,
