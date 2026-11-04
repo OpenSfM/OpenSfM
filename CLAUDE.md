@@ -14,7 +14,7 @@ OpenSfM is a Structure-from-Motion library with a hybrid architecture:
 
 ## 2. Key Developer Workflows
 
-> Always activate the conda environment at least once before building, running, or testing: `conda activate opensfm`.
+> Use the `opensfm` conda environment for building, running, and testing. In sandboxed or non-interactive shells where `conda activate` fails, skip activation and call the environment's interpreter directly (`<conda_base>/envs/opensfm/bin/python -m pytest ...`) — everything works without activation. On macOS, set up conda for the shell with `conda init zsh`, not bare `conda init`.
 
 ### Building
 The project uses `scikit-build-core` to compile C++ extensions (config in `pyproject.toml`).
@@ -26,11 +26,14 @@ The project uses `scikit-build-core` to compile C++ extensions (config in `pypro
 - **Frameworks**:
     - Python: `pytest`, tests in `opensfm/test/test_*.py`.
     - C++: `gtest`, tests in `opensfm/src/lib/<XXX>/test/*_test.cc`.
-- **Run Python tests**: `pytest opensfm/test/`. First run `export LD_PRELOAD=$CONDA_PREFIX/lib/libtcmalloc.so` (tcmalloc is mandatory). Run a single test with `pytest opensfm/test/test_foo.py::test_bar`. `not slow` excludes long integration tests.
+- **Run Python tests**: `pytest opensfm/test/`, or a single test with `pytest opensfm/test/test_foo.py::test_bar`. `-m "not slow"` excludes long integration tests. `pytest` comes from the `[test]` extra — if missing, `python -m pip install pytest`.
+- **tcmalloc (Linux only)**: `export LD_PRELOAD=$CONDA_PREFIX/lib/libtcmalloc.so` before running tests or the pipeline (`bin/opensfm` does it for you). On macOS the library is not shipped and nothing is needed.
+- **Timing**: `opensfm/test/test_commands.py` runs the full pipeline on `data/berlin` and takes ~8 minutes — it is NOT marked `slow`, so exclude it explicitly from quick sweeps and use a >=10 min timeout when running it. Most other test files finish in seconds.
 - **Run C++ tests**: built with `OPENSFM_BUILD_TESTS=ON`; run via `ctest --output-on-failure` from the CMake build directory.
 - **Coverage**: `./run_coverage.bash` (handles conda activation; defaults to `not slow`).
 - **Style**: favor many small tests with few asserts, ideally one function per test; only 1-2 larger integration tests per file. Prefer toy/synthetic examples that verify correctness, not just return semantics.
-- **Synthetic Data**: Python tests rely heavily on synthetic scenes generated in `opensfm/test/conftest.py` (e.g., fixtures `scene_synthetic`, `scene_synthetic_cube`).
+- **Synthetic Data**: Python tests rely heavily on synthetic scenes generated in `opensfm/test/conftest.py` (e.g., fixtures `scene_synthetic`, `scene_synthetic_cube`). To fake dataset I/O, monkeypatch methods on a `SyntheticDataSet` instance (pattern: `test_matching.py::test_match_images`) rather than writing new mocks.
+- **Sample datasets**: `data/berlin` (3 images) and `data/lund` (6 images) ship in the repo for end-to-end checks.
 
 ### Running the Pipeline
 - **Entry Point**: `bin/opensfm` (bash, sets `LD_PRELOAD` for tcmalloc) → `bin/opensfm_main.py` → `commands.command_runner`.
@@ -50,6 +53,11 @@ The project uses `scikit-build-core` to compile C++ extensions (config in `pypro
     * Minimize heap allocation/fragmentation: prefer stack-allocated buffers; reuse heap buffers; avoid tiny allocations inside long loops.
 - **Design**: Reuse the core lib's data structures. Manipulating large reconstructions efficiently is paramount — minimize copies, apply Data-Oriented Design, and leverage GPU acceleration where possible.
 
+### Performance & Data-Safety Rules
+- **Assume large datasets (10k+ images)**: never reload data that an earlier stage of the same process already loaded. Pass loaded EXIFs/matches along, and run extra passes where the `feature_loader`/`vlad` caches are still warm (i.e. before `matching.clear_cache()`) — a standalone command is a cold process that reloads everything.
+- **Earlier pipeline outputs are immutable**: features, matches and EXIF written by a previous step must never be deleted or overwritten by a later step — additive writes only; exclude already-processed items upstream instead of reconciling on write (see `matching.bridge_matching_components`). Domain experts refuse anything else as too fragile.
+- **Reuse before writing**: pair selection, matching and graph code almost always exists. `pairs_selection.match_candidates_from_metadata` generates pairs between two candidate sets and honors `config_override` (all strategies at 0 = all pairs); see also `matching.match_images_with_pairs` and `tracking.load_matches`.
+
 ### Type Hinting
 - Codebase uses `pyre-strict`. New code needs complete type annotations; files often carry a `# pyre-strict` header.
 
@@ -58,18 +66,21 @@ The project uses `scikit-build-core` to compile C++ extensions (config in `pypro
 - **Overrides**: Overridden by `config.yaml` in the dataset directory.
 - **Access**: `data.config['param_name']` where `data` is a `DataSet`.
 
-## 4. Essential Files
+## 4. Essential Files & Entry Points
 - `opensfm/dataset.py`: **READ THIS FIRST** for file I/O — defines where every file lives.
 - `opensfm/types.py`: Key data structures (`Reconstruction`, `Shot`, `Camera`).
 - `opensfm/config.py`: All tunable parameters.
 - `opensfm/src/lib/map/map.cc`: C++ backing implementation for `Reconstruction`.
 - `opensfm/commands/` + `opensfm/actions/`: CLI wrappers and their implementations.
+- `opensfm/pairs_selection.py`: `match_candidates_from_metadata(images_ref, images_cand, exifs, data, config_override)` — the single entry point for pair selection between two image sets.
+- `opensfm/matching.py`: `match_images` (pair selection + matching), `match_images_with_pairs` (match an explicit pair list), `bridge_matching_components` (cross-component pass), `clear_cache` (drops the feature/VLAD caches).
+- `opensfm/tracking.py`: `load_matches(data, images)` iterates the saved per-image match files.
 
 ## 5. Common Pitfalls
 - **Direct File Access**: Avoid manual `open()`. Use `dataset.load_*` / `dataset.save_*` to stay consistent with the expected directory structure.
 - **Geometry Types**: Be careful with rotation representations (angle-axis vs matrices). Check `pygeometry` helpers / `opensfm/src/lib/geometry/` when behavior is unclear.
-- **Skipping Conda**: Activate the conda environment at least once before building/running.
-- **tcmalloc**: Required at runtime — set `LD_PRELOAD=$CONDA_PREFIX/lib/libtcmalloc.so` (the `bin/opensfm` wrapper does this for you).
+- **Match storage**: `DataSet.save_matches` overwrites the whole `matches/{image}_matches.pkl.gz` file, and a pair's matches may be stored under either image (`find_matches` checks both orientations, flipping columns). Add new entries only — never rewrite existing ones.
+- **config_override**: matching/pair-selection functions take a `config_override` dict merged over `data.config` — drive existing functions with overrides instead of re-implementing variants.
 
 ## 6. General Notes
 - **Multi-Platform**: Runs on Windows, Linux, macOS. Avoid platform-specific code; use cross-platform libraries (Qt for GUI, STL/Eigen for C++).
@@ -77,3 +88,4 @@ The project uses `scikit-build-core` to compile C++ extensions (config in `pypro
 
 ## 7. Policy for Coding Agents
 - **No Git operations**: This is a shared repository. Do **not** perform Git operations (commit, push, pull, merge, rebase, etc.) — leave them to human developers so proper code review and collaboration are preserved. Only do so if the user explicitly asks in the current session.
+- **No new CLI commands**: the maintainer keeps the command surface fixed. Optional pipeline behavior goes behind a config value in `opensfm/config.py` consumed by an existing action (e.g. `force_match_components` in `match_features`) — do not add command/action pairs.
