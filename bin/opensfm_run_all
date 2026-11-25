@@ -11,4 +11,8 @@ DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 "$DIR"/opensfm reconstruct "$1"
 "$DIR"/opensfm mesh "$1"
 "$DIR"/opensfm undistort "$1"
+"$DIR"/opensfm dense_clustering "$1"
+"$DIR"/opensfm dense_equalize "$1"
 "$DIR"/opensfm compute_depthmaps "$1"
+"$DIR"/opensfm fuse_depthmaps "$1"
+"$DIR"/opensfm dense_merging "$1"

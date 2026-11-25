@@ -8,7 +8,7 @@ An example dataset is available at `data/berlin`. Reconstruct it by running:
 bin/opensfm_run_all data/berlin
 ```
 
-This runs the entire SfM pipeline and produces `data/berlin/reconstruction.meshed.json` as output.
+This runs the entire SfM pipeline followed by the [dense stages](#dense-point-clouds). It produces `data/berlin/reconstruction.meshed.json` and the dense outputs in `data/berlin/undistorted/depthmaps/`. Dense reconstruction requires an OpenCL GPU.
 
 ## Running in Docker
 
@@ -38,11 +38,12 @@ python viewer/server.py -d path/to/dataset
 
 ## Dense Point Clouds
 
-For a denser point cloud:
+`opensfm_run_all` runs these steps for you. To run them individually after `reconstruct`:
 
 ```bash
 bin/opensfm undistort data/berlin
 bin/opensfm dense_clustering data/berlin
+bin/opensfm dense_equalize data/berlin
 bin/opensfm compute_depthmaps data/berlin
 bin/opensfm fuse_depthmaps data/berlin
 bin/opensfm dense_merging data/berlin

@@ -31,6 +31,7 @@ Dense reconstruction is split into four commands that hand off through disk, so 
 | # | Command | Reads | Writes |
 | - | ------- | ----- | ------ |
 | 1 | `dense_clustering`  | undistorted reconstruction + tracks | clusters, super-points, neighbours, depth ranges, cluster bounding boxes |
+| — | `dense_equalize` (optional) | undistorted reconstruction + tracks | `equalization.json` (per-image gain, white balance, vignetting) |
 | 2 | `compute_depthmaps` | stage-1 artefacts + undistorted images | per-shot `*.raw.npz` → `*.clean.npz` depthmaps |
 | 3 | `fuse_depthmaps`    | cleaned depthmaps + stage-1 artefacts | per-cluster `fused_batch_*.ply` (+ `mesh_batch_*.ply`, DSM/ortho tiles) |
 | 4 | `dense_merging`     | per-cluster batches | `fused.ply`, `mesh.ply`, `dsm.tif`, `ortho.tif`, `fused.las/.laz`, `point_cloud/` |
@@ -38,6 +39,7 @@ Dense reconstruction is split into four commands that hand off through disk, so 
 ```bash
 bin/opensfm undistort         path/to/dataset
 bin/opensfm dense_clustering  path/to/dataset
+bin/opensfm dense_equalize    path/to/dataset   # optional: seam-free colours
 bin/opensfm compute_depthmaps path/to/dataset
 bin/opensfm fuse_depthmaps    path/to/dataset
 bin/opensfm dense_merging     path/to/dataset   # add --georeferenced for geo-located LAS/LAZ + DSM/ortho
