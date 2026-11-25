@@ -133,7 +133,9 @@ def run_clustering(
     config = data.config
     num_neighbors: int = config["depthmap_num_neighbors"]
 
-    processable = _processable(reconstruction)
+    processable = sorted(
+        set(_processable(reconstruction)) & set(graph.get_shot_ids())
+    )
     if not processable:
         logger.warning("No processable shots found for depthmap computation")
         return
