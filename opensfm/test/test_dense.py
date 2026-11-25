@@ -1064,3 +1064,37 @@ def test_run_clustering_skips_shots_missing_from_tracks(tmp_path: Path) -> None:
     dense.run_clustering(udata, tracks_manager, reconstruction)
 
     assert face_without_tracks not in udata.load_depth_ranges()
+
+
+def test_run_clustering_skips_shots_without_reconstructed_points(
+    tmp_path: Path,
+) -> None:
+    # A panorama cube face whose observations are all of unreconstructed
+    # tracks has no depth range.
+    np.random.seed(42)
+    reconstruction = synthetic_examples.synthetic_cube_scene().get_reconstruction()
+    tracks_manager = synthetic_scene.SyntheticInputData(
+        reconstruction,
+        geo.TopocentricConverter(47.0, 6.0, 0),
+        40, 0.0, 0.0, 0.0, (0.0, 0.0), False,
+    ).tracks_manager
+    template_shot = next(iter(reconstruction.shots.values()))
+    face_without_points = "pano_perspective_view_bottom.jpg"
+    reconstruction.create_shot(
+        face_without_points, template_shot.camera.id, template_shot.pose
+    )
+    tracks_manager.add_observation(
+        face_without_points,
+        "unreconstructed_track",
+        pymap.Observation(0.0, 0.0, 0.01, 255, 255, 255, 0, 0, 0),
+    )
+    (tmp_path / "image_list.txt").write_text("\n".join(reconstruction.shots))
+    udata = UndistortedDataSet(
+        dataset.DataSet(str(tmp_path)), str(tmp_path / "undistorted")
+    )
+
+    dense.run_clustering(udata, tracks_manager, reconstruction)
+
+    clustered = {sid for cluster in udata.load_clusters() for sid in cluster}
+    assert face_without_points not in clustered
+    assert face_without_points not in udata.load_depth_ranges()
