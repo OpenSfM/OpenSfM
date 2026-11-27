@@ -12,7 +12,14 @@ def run_dataset(data: DataSetBase) -> None:
     images = data.images()
 
     start = timer()
-    pairs_matches, preport = matching.match_images(data, {}, images, images)
+    exifs = {im: data.load_exif(im) for im in images}
+    pairs_matches, preport = matching.match_images(data, {}, images, images, exifs)
+    if data.config["force_match_components"]:
+        new_matches, creport = matching.bridge_matching_components(
+            data, {}, images, pairs_matches, exifs
+        )
+        pairs_matches.update(new_matches)
+        preport.update(creport)
     matching.save_matches(data, images, pairs_matches)
     matching.clear_cache()
     end = timer()

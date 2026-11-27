@@ -786,12 +786,9 @@ def match_candidates_from_metadata(
             f"Running non-GPS matching for {len(images_ref_no_gps)} images without GPS"
         )
 
-        no_gps_pairs = set()
-        no_gps_report = {}
-
-        def _matching_with_no_gps(candidates: List[str]) -> Tuple[Set[Tuple[str, str]], Dict[str, int]]:
+        def _matching_with_no_gps(candidates: List[str]) -> None:
             matching_ret = _run_matching_strategies(
-                images_ref_no_gps, images_cand_no_gps, exifs, data, reference,
+                images_ref_no_gps, candidates, exifs, data, reference,
                 0, 0, 0,  # max_distance, gps_neighbors, graph_rounds disabled
                 time_neighbors, order_neighbors,
                 bow_neighbors, 0, 0, bow_other_cameras,  # bow GPS preemption disabled
