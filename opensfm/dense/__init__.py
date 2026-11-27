@@ -133,7 +133,24 @@ def run_clustering(
     config = data.config
     num_neighbors: int = config["depthmap_num_neighbors"]
 
-    processable = _processable(reconstruction)
+    processable = sorted(
+        set(_processable(reconstruction)) & set(graph.get_shot_ids())
+    )
+    shots_without_points = {
+        sid for sid in processable
+        if not any(
+            tid in reconstruction.points
+            for tid in graph.get_shot_observations(sid)
+        )
+    }
+    if shots_without_points:
+        logger.warning(
+            f"Skipping {len(shots_without_points)} shot(s) that observe no "
+            f"reconstructed point: {', '.join(sorted(shots_without_points))}"
+        )
+        processable = [
+            sid for sid in processable if sid not in shots_without_points
+        ]
     if not processable:
         logger.warning("No processable shots found for depthmap computation")
         return

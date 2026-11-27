@@ -23,6 +23,7 @@ positional arguments:
     mesh                 Add Delaunay meshes to the reconstruction
     undistort            Save undistorted images
     dense_clustering     Dense stage 1: clusters, neighbours and depth ranges
+    dense_equalize       Dense (optional): per-image colour gain and vignetting
     compute_depthmaps    Dense stage 2: compute and clean depthmaps
     fuse_depthmaps       Dense stage 3: fuse cleaned depthmaps per cluster
     dense_merging        Dense stage 4: merge into the dense cloud, mesh, DSM and ortho
@@ -241,16 +242,18 @@ Key config: `undistorted_image_format`, `undistorted_image_max_size`. See [confi
 
 ### Dense reconstruction: `dense_clustering`, `compute_depthmaps`, `fuse_depthmaps`, `dense_merging`
 
-Dense reconstruction runs as four stages on an undistorted reconstruction, handed off through the `undistorted/depthmaps/` folder:
+Dense reconstruction runs as four stages, plus the optional `dense_equalize`, on an undistorted reconstruction. The stages hand off through the `undistorted/depthmaps/` folder. `opensfm_run_all` runs all of them.
 
 ```bash
 bin/opensfm dense_clustering  path/to/dataset
+bin/opensfm dense_equalize    path/to/dataset   # optional
 bin/opensfm compute_depthmaps path/to/dataset
 bin/opensfm fuse_depthmaps    path/to/dataset
 bin/opensfm dense_merging     path/to/dataset   # add --georeferenced for LAS/LAZ + DSM/ortho in the output CRS
 ```
 
 - **`dense_clustering`** — groups covisible shots into clusters and computes per-shot neighbours and depth ranges (`clusters.json`, `neighbors_*.json`, `depth_ranges.json`, ...).
+- **`dense_equalize`** (optional) — estimates a per-image gain, white balance and vignetting from the SfM tracks and writes `equalization.json`. Fusion applies it to the dense colours when the file exists. See [Dense Colour Equalization](configuration.md#dense-colour-equalization).
 - **`compute_depthmaps`** — GPU PatchMatch depthmaps followed by a consistency/visibility cleaning pass; writes per-shot `*.clean.npz`. Requires `dense_clustering` to have run first.
 - **`fuse_depthmaps`** — sparse-voxel-octree TSDF fusion per cluster → `fused_batch_*.ply` (plus `mesh_batch_*.ply` and DSM/ortho tiles when enabled).
 - **`dense_merging`** — merges the batches into the final products: `fused.ply`, `mesh.ply` (Surface Nets), `dsm.tif`, `ortho.tif`, optional `fused.las` / `fused.laz`, and the `point_cloud/` octree tiles. Pass `--georeferenced` to write the LAS/LAZ and DSM/ortho in the output coordinate system (the projected GCP CRS if one is given, otherwise a UTM zone derived from the reference position).

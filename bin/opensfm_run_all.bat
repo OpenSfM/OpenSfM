@@ -5,4 +5,8 @@ call %~dp0opensfm.bat create_tracks %1
 call %~dp0opensfm.bat reconstruct %1
 call %~dp0opensfm.bat mesh %1
 call %~dp0opensfm.bat undistort %1
+call %~dp0opensfm.bat dense_clustering %1
+call %~dp0opensfm.bat dense_equalize %1
 call %~dp0opensfm.bat compute_depthmaps %1
+call %~dp0opensfm.bat fuse_depthmaps %1
+call %~dp0opensfm.bat dense_merging %1

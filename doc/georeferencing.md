@@ -148,6 +148,7 @@ bin/opensfm create_tracks DATA
 bin/opensfm reconstruct DATA
 bin/opensfm undistort DATA
 bin/opensfm dense_clustering DATA
+bin/opensfm dense_equalize DATA
 bin/opensfm compute_depthmaps DATA
 bin/opensfm fuse_depthmaps DATA
 bin/opensfm dense_merging --georeferenced DATA

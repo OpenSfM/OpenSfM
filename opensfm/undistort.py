@@ -59,7 +59,9 @@ def undistort_reconstruction(
             urec.add_camera(perspective_camera_from_fisheye62(shot.camera))
             subshots = [get_shot_with_different_camera(urec, shot, image_format)]
         elif pygeometry.Camera.is_panorama(shot.camera.projection_type):
-            subshot_width = int(data.config["depthmap_resolution"])
+            subshot_width = min(
+                shot.camera.width // 4, data.config["depthmap_max_image_size"]
+            )
             subshots = perspective_views_of_a_panorama(
                 shot, subshot_width, urec, image_format, rig_instance_count
             )
